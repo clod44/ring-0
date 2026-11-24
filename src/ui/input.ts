@@ -17,24 +17,27 @@ export function initInputBridge(opts: InputBridgeOptions) {
   }
 
   function focusInput() {
-    if (kbdProxy) {
-      kbdProxy.focus({ preventScroll: true });
-    } else {
+    if (!kbdProxy) {
       screenEl.focus({ preventScroll: true });
+      return;
+    }
+    if (document.activeElement !== kbdProxy) {
+      kbdProxy.focus({ preventScroll: true });
     }
   }
 
-  screenEl.addEventListener('pointerdown', () => {
+  // Use 'click' (a complete tap gesture) rather than 'pointerdown' so mobile keyboards stay open
+  screenEl.addEventListener('click', () => {
     focusInput();
   });
 
-  ctrlBtn?.addEventListener('pointerdown', (e) => {
+  ctrlBtn?.addEventListener('click', (e) => {
     e.preventDefault();
     setStickyCtrl(!stickyCtrl);
     focusInput();
   });
 
-  mobileKeysEl?.addEventListener('pointerdown', (e) => {
+  mobileKeysEl?.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-key]');
     if (!btn) return;
     e.preventDefault();
