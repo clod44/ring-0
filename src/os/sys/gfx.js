@@ -44,31 +44,117 @@ for (const [ch, hex] of Object.entries(RAW_FONT)) {
   FONT[ch] = rows;
 }
 
-const W = OS.width;
-const H = OS.height;
+const CONF_PATH = '/etc/gfx.conf';
+const PHYS_W = OS.width;
+const PHYS_H = OS.height;
 const vram = OS.vram;
 
-const CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
-const toCube = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, ((v - 35) / 40) | 0));
+let scale = 1;
+let W = PHYS_W;
+let H = PHYS_H;
+
+function applyScale(nextScale) {
+  scale = Math.max(1, Math.min(4, Math.floor(nextScale) || 1));
+  W = Math.floor(PHYS_W / scale);
+  H = Math.floor(PHYS_H / scale);
+  OS.width = W;
+  OS.height = H;
+}
+
+function parseConf(text) {
+  const cfg = {};
+  if (!text) return cfg;
+
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    const val = line.slice(eq + 1).trim();
+    cfg[key] = val;
+  }
+
+  return cfg;
+}
+
+function loadConfig(path = CONF_PATH) {
+  try {
+    if (!OS.fs || !OS.fs.exists(path)) {
+      applyScale(1);
+      return;
+    }
+    const conf = parseConf(OS.fs.read(path));
+    applyScale(conf.scale ? Number(conf.scale) : 1);
+  } catch {
+    applyScale(1);
+  }
+}
+
+function saveConfig(path = CONF_PATH) {
+  if (!OS.fs) return false;
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  if (dir && !OS.fs.exists(dir) && OS.fs.mkdir) {
+    OS.fs.mkdir(dir);
+  }
+  OS.fs.write(path, `# RING-0 graphics config\nscale=${scale}\n`);
+  return true;
+}
+
+function putScaledPixel(lx, ly, color) {
+  if (lx < 0 || ly < 0 || lx >= W || ly >= H) return;
+
+  const px0 = lx * scale;
+  const py0 = ly * scale;
+
+  for (let dy = 0; dy < scale; dy++) {
+    const rowStart = (py0 + dy) * PHYS_W + px0;
+    vram.fill(color, rowStart, rowStart + scale);
+  }
+}
 
 function hline(x0, x1, y, color) {
   if (y < 0 || y >= H) return;
   const start = Math.max(0, x0 | 0);
   const end = Math.min(W - 1, x1 | 0);
-  if (start > end) return;
-  vram.fill(color, y * W + start, y * W + end + 1);
+  for (let x = start; x <= end; x++) {
+    putScaledPixel(x, y, color);
+  }
 }
 
+const CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
+const toCube = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, ((v - 35) / 40) | 0));
+
 OS.gfx = {
+  confPath: CONF_PATH,
+
+  get width() {
+    return W;
+  },
+  get height() {
+    return H;
+  },
+  get scale() {
+    return scale;
+  },
+  setScale(nextScale, persist = false) {
+    applyScale(nextScale);
+    if (persist) saveConfig();
+  },
+  reloadConfig(path = CONF_PATH) {
+    loadConfig(path);
+    return scale;
+  },
+  saveConfig(path = CONF_PATH) {
+    return saveConfig(path);
+  },
+
   clear(color = 0) {
     vram.fill(color);
   },
 
   pixel(x, y, color) {
-    x = x | 0;
-    y = y | 0;
-    if (x < 0 || x >= W || y < 0 || y >= H) return;
-    vram[y * W + x] = color;
+    putScaledPixel(x | 0, y | 0, color);
   },
 
   rect(x, y, w, h, color, fill = true) {
@@ -84,7 +170,9 @@ OS.gfx = {
       const x1 = Math.min(W, x + w);
       const y1 = Math.min(H, y + h);
       for (let row = y0; row < y1; row++) {
-        vram.fill(color, row * W + x0, row * W + x1);
+        for (let col = x0; col < x1; col++) {
+          putScaledPixel(col, row, color);
+        }
       }
     } else {
       hline(x, x + w - 1, y, color);
@@ -106,7 +194,7 @@ OS.gfx = {
     let err = dx - dy;
 
     while (true) {
-      this.pixel(x0, y0, color);
+      putScaledPixel(x0, y0, color);
       if (x0 === x1 && y0 === y1) break;
       const e2 = 2 * err;
       if (e2 > -dy) { err -= dy; x0 += sx; }
@@ -128,14 +216,14 @@ OS.gfx = {
         hline(cx - y, cx + y, cy + x, color);
         hline(cx - y, cx + y, cy - x, color);
       } else {
-        this.pixel(cx + x, cy + y, color);
-        this.pixel(cx + y, cy + x, color);
-        this.pixel(cx - y, cy + x, color);
-        this.pixel(cx - x, cy + y, color);
-        this.pixel(cx - x, cy - y, color);
-        this.pixel(cx - y, cy - x, color);
-        this.pixel(cx + y, cy - x, color);
-        this.pixel(cx + x, cy - y, color);
+        putScaledPixel(cx + x, cy + y, color);
+        putScaledPixel(cx + y, cy + x, color);
+        putScaledPixel(cx - y, cy + x, color);
+        putScaledPixel(cx - x, cy + y, color);
+        putScaledPixel(cx - x, cy - y, color);
+        putScaledPixel(cx - y, cy - x, color);
+        putScaledPixel(cx + y, cy - x, color);
+        putScaledPixel(cx + x, cy - y, color);
       }
       y++;
       if (err < 0) {
@@ -153,15 +241,14 @@ OS.gfx = {
       const py = y + row;
       if (py < 0 || py >= H) continue;
       const bits = glyph[row];
-      const rowOffset = py * W;
 
       for (let col = 0; col < 8; col++) {
         const px = x + col;
         if (px < 0 || px >= W) continue;
         if ((bits >> col) & 1) {
-          vram[rowOffset + px] = fg;
+          putScaledPixel(px, py, fg);
         } else if (bg >= 0) {
-          vram[rowOffset + px] = bg;
+          putScaledPixel(px, py, bg);
         }
       }
     }
@@ -195,3 +282,5 @@ OS.gfx = {
     return grayDist < cubeDist ? 232 + gi : cubeIdx;
   },
 };
+
+loadConfig();

@@ -281,6 +281,7 @@ async function runLine(line) {
 
 OS.tty.clear(THEME.bg);
 OS.tty.println('RING-0 // SHELL v0.6', THEME.banner);
+OS.tty.println('type "tree" to see the file system', THEME.text);
 OS.tty.println('', THEME.text);
 
 while (true) {
