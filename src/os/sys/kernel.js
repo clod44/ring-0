@@ -3,6 +3,7 @@ const dec = new TextDecoder();
 
 const TABLE_START = 1;
 const TABLE_SECTORS = 16;
+const DATA_START = TABLE_START + TABLE_SECTORS; // Sector 17
 const TABLE_MAX_BYTES = TABLE_SECTORS * HW.sectorSize;
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -13,12 +14,69 @@ function sectorsFor(byteLength) {
   return Math.ceil(byteLength / HW.sectorSize) || 1;
 }
 
+function getTotalSectors() {
+  const totalBytes = HW.diskSize || 2 * 1024 * 1024;
+  return Math.floor(totalBytes / HW.sectorSize);
+}
+
+function computeHighWaterSector(entries) {
+  let maxEnd = DATA_START;
+  for (const e of entries) {
+    if (e.type === 'file' && typeof e.start === 'number' && typeof e.size === 'number') {
+      maxEnd = Math.max(maxEnd, e.start + sectorsFor(e.size));
+    }
+  }
+  return maxEnd;
+}
+
+function findFreeRun(entries, sectorsNeeded, ignoreEntry = null) {
+  const totalSectors = getTotalSectors();
+  if (sectorsNeeded <= 0 || DATA_START + sectorsNeeded > totalSectors) {
+    return -1;
+  }
+
+  const used = new Uint8Array(totalSectors);
+  for (let s = 0; s < Math.min(DATA_START, totalSectors); s++) {
+    used[s] = 1;
+  }
+
+  for (const e of entries) {
+    if (e === ignoreEntry || e.type !== 'file') continue;
+    if (typeof e.start !== 'number' || typeof e.size !== 'number') continue;
+
+    const count = sectorsFor(e.size);
+    const end = Math.min(totalSectors, e.start + count);
+    for (let s = e.start; s < end; s++) {
+      used[s] = 1;
+    }
+  }
+
+  let runStart = -1;
+  let runLen = 0;
+
+  for (let s = DATA_START; s < totalSectors; s++) {
+    if (used[s] === 0) {
+      if (runLen === 0) runStart = s;
+      runLen++;
+      if (runLen >= sectorsNeeded) {
+        return runStart;
+      }
+    } else {
+      runStart = -1;
+      runLen = 0;
+    }
+  }
+
+  return -1;
+}
+
 function loadTable() {
   const raw = dec.decode(HW.readSectors(TABLE_START, TABLE_SECTORS)).replace(/\0+$/, '');
   return JSON.parse(raw);
 }
 
 function saveTable(table) {
+  table.nextSector = computeHighWaterSector(table.entries);
   const bytes = enc.encode(JSON.stringify(table));
   if (bytes.length > TABLE_MAX_BYTES) {
     throw new Error('FS: File table exceeded 8KB limit');
@@ -123,11 +181,11 @@ const fs = {
       HW.writeSectors(entry.start, padded);
       entry.size = data.length;
     } else {
-      if (HW.diskSize && (table.nextSector + sectorsNeeded) * HW.sectorSize > HW.diskSize) {
+      const start = findFreeRun(table.entries, sectorsNeeded, entry);
+      if (start === -1) {
         throw new Error(`Disk full: cannot write ${resolved}`);
       }
-      const start = table.nextSector;
-      table.nextSector += sectorsNeeded;
+
       HW.writeSectors(start, padded);
 
       if (entry) {
@@ -159,7 +217,6 @@ const fs = {
     const entry = table.entries.find((e) => e.path === src);
     if (!entry) throw new Error(`Not found: ${src}`);
 
-    // If dest is an existing directory, move src inside it
     let finalDest = dest;
     const destEntry = table.entries.find((e) => e.path === dest);
     if (dest === '/' || (destEntry && destEntry.type === 'dir')) {
@@ -199,6 +256,7 @@ const fs = {
 
     saveTable(table);
   },
+
   statFs() {
     const raw = dec.decode(HW.readSectors(TABLE_START, TABLE_SECTORS)).replace(/\0+$/, '');
     const table = JSON.parse(raw);
@@ -206,7 +264,16 @@ const fs = {
     const sectorSize = HW.sectorSize;
     const totalBytes = HW.diskSize || 2 * 1024 * 1024;
     const totalSectors = Math.floor(totalBytes / sectorSize);
-    const usedSectors = table.nextSector;
+    const highWaterSector = computeHighWaterSector(table.entries);
+
+    let allocatedDataSectors = 0;
+    for (const e of table.entries) {
+      if (e.type === 'file' && typeof e.start === 'number' && typeof e.size === 'number') {
+        allocatedDataSectors += sectorsFor(e.size);
+      }
+    }
+
+    const usedSectors = DATA_START + allocatedDataSectors;
     const freeSectors = Math.max(0, totalSectors - usedSectors);
 
     const fileCount = table.entries.filter((e) => e.type === 'file').length;
@@ -217,6 +284,7 @@ const fs = {
       totalSectors,
       usedSectors,
       freeSectors,
+      highWaterSector,
       totalBytes,
       usedBytes: usedSectors * sectorSize,
       freeBytes: freeSectors * sectorSize,
@@ -226,6 +294,7 @@ const fs = {
       dirCount,
     };
   },
+
   remove(path, recursive = false) {
     const resolved = OS.resolvePath(path);
     if (resolved === '/') throw new Error('Cannot remove root directory');
@@ -252,10 +321,8 @@ const fs = {
 
   defrag() {
     const table = loadTable();
-    const dataStart = TABLE_START + TABLE_SECTORS; // Sector 17
-    const oldNextSector = table.nextSector;
+    const oldNextSector = computeHighWaterSector(table.entries);
 
-    // 1. Read all active files into memory first so writes never clobber unread data
     const files = table.entries
       .filter((e) => e.type === 'file')
       .map((entry) => {
@@ -264,15 +331,13 @@ const fs = {
         return { entry, sectors, data };
       });
 
-    // 2. Pack all active files contiguously starting at Sector 17
-    let nextSector = dataStart;
+    let nextSector = DATA_START;
     for (const file of files) {
       HW.writeSectors(nextSector, file.data);
       file.entry.start = nextSector;
       nextSector += file.sectors;
     }
 
-    // 3. Zero out reclaimed sectors so the disk visualizer sees them as empty
     const reclaimedSectors = Math.max(0, oldNextSector - nextSector);
     if (reclaimedSectors > 0) {
       HW.writeSectors(nextSector, new Uint8Array(reclaimedSectors * HW.sectorSize));
@@ -308,7 +373,7 @@ const OS = {
   vram: HW.vram,
   log: HW.log,
   cwd: '/',
-  stdin: null,// In kernel.js, inside OS:
+  stdin: null,
   modules: {},
 
   require(path) {
@@ -324,7 +389,7 @@ const OS = {
 
     this.modules[resolved] = module.exports;
     return module.exports;
-},
+  },
 
   resolvePath(input = '') {
     if (!input) return this.cwd;
