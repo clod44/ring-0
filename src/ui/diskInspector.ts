@@ -1,4 +1,4 @@
-import { SECTOR_SIZE, TOTAL_SECTORS } from '../hw/config.ts';
+import { SECTOR_SIZE, TOTAL_SECTORS } from "../hw/config.ts";
 
 const TABLE_START = 1;
 const TABLE_SECTORS = 16;
@@ -9,7 +9,7 @@ const MAP_COLS = 128;
 const CELL_PX = 6;
 const BYTES_PER_ROW = 4; // 32 bits per row
 
-type SectorState = 'mbr' | 'table' | 'allocated' | 'stale' | 'free';
+type SectorState = "mbr" | "table" | "allocated" | "stale" | "free";
 
 interface SectorInfo {
   state: SectorState;
@@ -20,22 +20,27 @@ interface SectorInfo {
 interface FsEntry {
   path: string;
   name: string;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   start?: number;
   size?: number;
 }
 
-export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () => void) {
+export function initDiskInspector(
+  initialDisk: Uint8Array,
+  onRequestRefresh: () => void,
+) {
   let disk = initialDisk;
 
-  const mapCanvas = document.getElementById('disk-map') as HTMLCanvasElement;
-  const ctx = mapCanvas.getContext('2d')!;
-  const statsEl = document.getElementById('disk-stats')!;
-  const bitDumpEl = document.getElementById('bit-dump')!;
-  const sectorInput = document.getElementById('sector-input') as HTMLInputElement;
-  const sectorOwnerEl = document.getElementById('sector-owner')!;
-  const mbrPreviewEl = document.getElementById('mbr-preview')!;
-  const fsTableBody = document.getElementById('fs-table-body')!;
+  const mapCanvas = document.getElementById("disk-map") as HTMLCanvasElement;
+  const ctx = mapCanvas.getContext("2d")!;
+  const statsEl = document.getElementById("disk-stats")!;
+  const bitDumpEl = document.getElementById("bit-dump")!;
+  const sectorInput = document.getElementById(
+    "sector-input",
+  ) as HTMLInputElement;
+  const sectorOwnerEl = document.getElementById("sector-owner")!;
+  const mbrPreviewEl = document.getElementById("mbr-preview")!;
+  const fsTableBody = document.getElementById("fs-table-body")!;
 
   const decoder = new TextDecoder();
   let selectedSector = 0;
@@ -63,7 +68,9 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
   }
 
   function parseFileTable(): FsEntry[] {
-    const raw = decodeZeroTerminated(readSectorSlice(TABLE_START, TABLE_SECTORS));
+    const raw = decodeZeroTerminated(
+      readSectorSlice(TABLE_START, TABLE_SECTORS),
+    );
     if (!raw.trim()) return [];
     try {
       const parsed = JSON.parse(raw);
@@ -77,7 +84,10 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
     const ownerBySector = new Map<number, string>();
 
     for (const entry of parsedEntries) {
-      if (entry.type === 'file' && entry.start !== undefined && entry.size !== undefined) {
+      if (
+        entry.type === "file" && entry.start !== undefined &&
+        entry.size !== undefined
+      ) {
         const count = Math.max(1, Math.ceil(entry.size / SECTOR_SIZE));
         const end = Math.min(TOTAL_SECTORS, entry.start + count);
         for (let s = entry.start; s < end; s++) {
@@ -92,19 +102,23 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
       const nonZeroBytes = countNonZero(s);
 
       if (s === 0) {
-        infos[s] = { state: 'mbr', label: 'MBR (Bootloader)', nonZeroBytes };
+        infos[s] = { state: "mbr", label: "MBR (Bootloader)", nonZeroBytes };
       } else if (s < DATA_START) {
-        infos[s] = { state: 'table', label: 'File Table (JSON)', nonZeroBytes };
+        infos[s] = { state: "table", label: "File Table (JSON)", nonZeroBytes };
       } else if (ownerBySector.has(s)) {
-        infos[s] = { state: 'allocated', label: ownerBySector.get(s)!, nonZeroBytes };
+        infos[s] = {
+          state: "allocated",
+          label: ownerBySector.get(s)!,
+          nonZeroBytes,
+        };
       } else if (nonZeroBytes > 0) {
         infos[s] = {
-          state: 'stale',
+          state: "stale",
           label: `Flagged Free / Stale Data (${nonZeroBytes} non-zero B)`,
           nonZeroBytes,
         };
       } else {
-        infos[s] = { state: 'free', label: 'Free / Zeroed', nonZeroBytes: 0 };
+        infos[s] = { state: "free", label: "Free / Zeroed", nonZeroBytes: 0 };
       }
     }
 
@@ -113,18 +127,18 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
 
   function getSectorFill(info: SectorInfo): string {
     switch (info.state) {
-      case 'mbr':
-        return '#f59e0b';
-      case 'table':
-        return '#38bdf8';
-      case 'allocated': {
+      case "mbr":
+        return "#f59e0b";
+      case "table":
+        return "#38bdf8";
+      case "allocated": {
         const density = 0.35 + (info.nonZeroBytes / SECTOR_SIZE) * 0.65;
         return `rgba(74, 222, 128, ${density.toFixed(2)})`;
       }
-      case 'stale':
-        return '#f97316'; // Flagged free in FS, but non-zero bytes remain
-      case 'free':
-        return '#18181b'; // Flagged free and all zero bytes
+      case "stale":
+        return "#f97316"; // Flagged free in FS, but non-zero bytes remain
+      case "free":
+        return "#18181b"; // Flagged free and all zero bytes
     }
   }
 
@@ -134,9 +148,12 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
 
     for (let s = 0; s < TOTAL_SECTORS; s++) {
       const info = sectorMap[s];
-      if (info.state === 'mbr' || info.state === 'table' || info.state === 'allocated') {
+      if (
+        info.state === "mbr" || info.state === "table" ||
+        info.state === "allocated"
+      ) {
         allocatedCount++;
-      } else if (info.state === 'stale') {
+      } else if (info.state === "stale") {
         staleCount++;
       }
 
@@ -147,9 +164,14 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
       ctx.fillRect(col * CELL_PX, row * CELL_PX, CELL_PX - 1, CELL_PX - 1);
 
       if (s === selectedSector) {
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
-        ctx.strokeRect(col * CELL_PX + 0.5, row * CELL_PX + 0.5, CELL_PX - 2, CELL_PX - 2);
+        ctx.strokeRect(
+          col * CELL_PX + 0.5,
+          row * CELL_PX + 0.5,
+          CELL_PX - 2,
+          CELL_PX - 2,
+        );
       }
     }
 
@@ -167,22 +189,22 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
     const lines: string[] = [];
 
     for (let i = 0; i < SECTOR_SIZE; i += BYTES_PER_ROW) {
-      const addr = (sector * SECTOR_SIZE + i).toString(16).padStart(6, '0');
-      let bits = '';
-      let hex = '';
-      let ascii = '';
+      const addr = (sector * SECTOR_SIZE + i).toString(16).padStart(6, "0");
+      let bits = "";
+      let hex = "";
+      let ascii = "";
 
       for (let j = 0; j < BYTES_PER_ROW; j++) {
         const b = bytes[i + j] ?? 0;
-        bits += b.toString(2).padStart(8, '0') + ' ';
-        hex += b.toString(16).padStart(2, '0') + ' ';
-        ascii += b >= 32 && b <= 126 ? String.fromCharCode(b) : '.';
+        bits += b.toString(2).padStart(8, "0") + " ";
+        hex += b.toString(16).padStart(2, "0") + " ";
+        ascii += b >= 32 && b <= 126 ? String.fromCharCode(b) : ".";
       }
 
       lines.push(`0x${addr} | ${bits}| ${hex}| ${ascii}`);
     }
 
-    bitDumpEl.textContent = lines.join('\n');
+    bitDumpEl.textContent = lines.join("\n");
   }
 
   function selectSector(sector: number) {
@@ -195,23 +217,23 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
     fsTableBody.replaceChildren();
 
     for (const entry of parsedEntries) {
-      const tr = document.createElement('tr');
+      const tr = document.createElement("tr");
 
       const cells = [
         entry.path,
         entry.type,
-        entry.start !== undefined ? String(entry.start) : '-',
-        entry.size !== undefined ? `${entry.size} B` : '-',
+        entry.start !== undefined ? String(entry.start) : "-",
+        entry.size !== undefined ? `${entry.size} B` : "-",
       ];
 
       for (const text of cells) {
-        const td = document.createElement('td');
+        const td = document.createElement("td");
         td.textContent = text;
         tr.appendChild(td);
       }
 
       if (entry.start !== undefined) {
-        tr.addEventListener('click', () => selectSector(entry.start!));
+        tr.addEventListener("click", () => selectSector(entry.start!));
       }
 
       fsTableBody.appendChild(tr);
@@ -219,14 +241,15 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
   }
 
   function refresh() {
-    mbrPreviewEl.textContent = decodeZeroTerminated(readSectorSlice(0)) || '(empty)';
+    mbrPreviewEl.textContent = decodeZeroTerminated(readSectorSlice(0)) ||
+      "(empty)";
     parsedEntries = parseFileTable();
     sectorMap = buildSectorMap();
     renderFileTable();
     selectSector(selectedSector);
   }
 
-  mapCanvas.addEventListener('click', (e) => {
+  mapCanvas.addEventListener("click", (e) => {
     const rect = mapCanvas.getBoundingClientRect();
     const scaleX = mapCanvas.width / rect.width;
     const scaleY = mapCanvas.height / rect.height;
@@ -238,19 +261,19 @@ export function initDiskInspector(initialDisk: Uint8Array, onRequestRefresh: () 
     }
   });
 
-  document.getElementById('prev-sector')!.addEventListener('click', () => {
+  document.getElementById("prev-sector")!.addEventListener("click", () => {
     selectSector(selectedSector - 1);
   });
 
-  document.getElementById('next-sector')!.addEventListener('click', () => {
+  document.getElementById("next-sector")!.addEventListener("click", () => {
     selectSector(selectedSector + 1);
   });
 
-  sectorInput.addEventListener('change', () => {
+  sectorInput.addEventListener("change", () => {
     selectSector(parseInt(sectorInput.value, 10) || 0);
   });
 
-  document.getElementById('refresh-disk-btn')!.addEventListener('click', () => {
+  document.getElementById("refresh-disk-btn")!.addEventListener("click", () => {
     onRequestRefresh();
   });
 

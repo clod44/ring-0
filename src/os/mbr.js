@@ -4,9 +4,9 @@ const table = JSON.parse(rawTable);
 const entry = table.entries.find((e) => e.path === '/sys/kernel.js');
 
 if (!entry) {
-  HW.log('MBR: /sys/kernel.js not found!');
+    HW.log('MBR: /sys/kernel.js not found!');
 } else {
-  const sectors = Math.ceil(entry.size / HW.sectorSize) || 1;
-  const bytes = HW.readSectors(entry.start, sectors).slice(0, entry.size);
-  new Function('HW', dec.decode(bytes))(HW);
+    const sectors = Math.ceil(entry.size / HW.sectorSize) || 1;
+    const bytes = HW.readSectors(entry.start, sectors).slice(0, entry.size);
+    new Function('HW', dec.decode(bytes))(HW);
 }
