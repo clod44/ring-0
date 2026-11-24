@@ -8,10 +8,18 @@ import { initDiskIo } from "./ui/diskIo";
 const buildLabel = `${__BUILD_SHA__} · ${__BUILD_MSG__}`;
 document.title = `RING-0 // ${__BUILD_SHA__}`;
 
-const buildEl = document.getElementById("build-info");
+const buildEl = document.getElementById("build-info") as
+  | HTMLAnchorElement
+  | null;
 if (buildEl) {
   buildEl.textContent = buildLabel;
   buildEl.title = buildLabel;
+
+  if (__BUILD_SHA__ && __BUILD_SHA__ !== "local") {
+    buildEl.href = `https://github.com/clod44/ring-0/commit/${__BUILD_SHA__}`;
+  } else {
+    buildEl.removeAttribute("href");
+  }
 }
 
 const display = new Display("screen");
