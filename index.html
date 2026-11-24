@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RING-0 // Terminal</title>
+  </head>
+  <body class="bg-zinc-950 text-zinc-200 font-mono min-h-screen flex flex-col items-center py-6 px-4 gap-12">
+    <main class="flex flex-col items-center gap-3 bg-zinc-900 border border-zinc-800 p-4 rounded-lg shadow-2xl">
+      <canvas
+        id="screen"
+        tabindex="0"
+        class="bg-black border border-zinc-700 outline-none focus:border-emerald-500 w-[640px] h-[480px]"
+      ></canvas>
+      <div class="w-full flex items-center justify-between text-xs">
+        <span class="text-zinc-400">RING-0</span>
+        
+        <div>
+          <button
+            id="reboot-btn"
+            class="px-3 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-800/70 rounded cursor-pointer"
+          >
+            REBOOT
+          </button>
+          <button
+            id="reset-btn"
+            class="px-3 py-1 bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/70 rounded cursor-pointer"
+          >
+            HARD RESET
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <section class="w-full max-w-4xl flex flex-col gap-4 pb-12">
+      <header class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <h2 class="text-sm font-bold text-emerald-400">DISK</h2>
+        <div class="flex items-center gap-3 text-xs">
+          <span id="disk-stats" class="text-zinc-400">Used: --</span>
+          <button
+            id="refresh-disk-btn"
+            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded cursor-pointer"
+          >
+            REFRESH
+          </button>
+        </div>
+      </header>
+
+      <!-- Widget 1: Full Disk Bitmap + Bitwise Inspector -->
+      <div class="bg-zinc-900/70 border border-zinc-800 rounded p-3 flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
+          <span>1. FULL DISK MAP (CLICK ANY SECTOR)</span>
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-amber-500 inline-block"></span>MBR (0)</span>
+            <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-sky-400 inline-block"></span>Table (1-16)</span>
+            <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-emerald-400 inline-block"></span>Data</span>
+            <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-zinc-800 inline-block border border-zinc-700"></span>Empty</span>
+          </div>
+        </div>
+
+        <canvas
+          id="disk-map"
+          width="768"
+          height="192"
+          class="w-full h-auto cursor-crosshair border border-zinc-800 bg-zinc-950"
+        ></canvas>
+
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <button
+            id="prev-sector"
+            class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded cursor-pointer"
+          >
+            &lt; PREV
+          </button>
+          <label class="flex items-center gap-1.5 text-zinc-400">
+            SECTOR:
+            <input
+              id="sector-input"
+              type="number"
+              min="0"
+              max="4095"
+              value="0"
+              class="w-16 bg-zinc-950 text-emerald-400 border border-zinc-700 rounded px-1.5 py-0.5 outline-none focus:border-emerald-500"
+            />
+          </label>
+          <button
+            id="next-sector"
+            class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded cursor-pointer"
+          >
+            NEXT &gt;
+          </button>
+          <span id="sector-owner" class="text-zinc-500 ml-1">Region: MBR (Bootloader)</span>
+        </div>
+
+        <pre
+          id="bit-dump"
+          class="bg-zinc-950 border border-zinc-800 rounded p-2.5 max-h-64 overflow-y-auto text-[11px] leading-relaxed text-lime-400"
+        ></pre>
+      </div>
+
+      <!-- Widget 2: Parsed Disk Sections -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-zinc-900/70 border border-zinc-800 rounded p-3 flex flex-col gap-2">
+          <div class="text-xs text-zinc-400">2A. SECTOR 0 // MBR BOOTLOADER</div>
+          <pre
+            id="mbr-preview"
+            class="bg-zinc-950 border border-zinc-800 rounded p-2.5 max-h-60 overflow-auto text-[11px] text-amber-400 whitespace-pre-wrap"
+          ></pre>
+        </div>
+
+        <div class="bg-zinc-900/70 border border-zinc-800 rounded p-3 flex flex-col gap-2">
+          <div class="text-xs text-zinc-400">2B. SECTORS 1-16 // PARSED FILE TABLE</div>
+          <div class="max-h-60 overflow-y-auto border border-zinc-800 rounded bg-zinc-950">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead class="sticky top-0 bg-zinc-900 text-zinc-400 border-b border-zinc-800">
+                <tr>
+                  <th class="py-1.5 px-2 font-normal">PATH</th>
+                  <th class="py-1.5 px-2 font-normal">TYPE</th>
+                  <th class="py-1.5 px-2 font-normal">START</th>
+                  <th class="py-1.5 px-2 font-normal">SIZE</th>
+                </tr>
+              </thead>
+              <tbody
+                id="fs-table-body"
+                class="[&_tr]:cursor-pointer [&_tr:hover]:bg-zinc-800/80 [&_td]:py-1 [&_td]:px-2 [&_td]:border-b [&_td]:border-zinc-900"
+              ></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
