@@ -5,6 +5,15 @@ import { initDiskInspector } from './ui/diskInspector';
 import { initInputBridge } from './ui/input';
 import { initDiskIo } from './ui/diskIo';
 
+const buildLabel = `${__BUILD_SHA__} · ${__BUILD_MSG__}`;
+document.title = `RING-0 // ${__BUILD_SHA__}`;
+
+const buildEl = document.getElementById('build-info');
+if (buildEl) {
+  buildEl.textContent = buildLabel;
+  buildEl.title = buildLabel;
+}
+
 const display = new Display('screen');
 const screenEl = document.getElementById('screen') as HTMLCanvasElement;
 const resetBtn = document.getElementById('reset-btn')!;
