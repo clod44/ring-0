@@ -92,17 +92,27 @@ function deleteForward(s) {
   }
 }
 
+function saveFile(s) {
+  OS.fs.write(s.path, s.lines.join('\n'));
+  s.dirty = false;
+  s.status = 'Saved!';
+}
+
+function extractKey(raw) {
+  if (raw && typeof raw === 'object') {
+    if (raw.ctrlKey || raw.ctrl) return null;
+    return String(raw.key ?? '');
+  }
+  return typeof raw === 'string' ? raw : '';
+}
+
 // --- 3. KEY DISPATCH TABLE ---
 
 const KEY_ACTIONS = {
   Escape: (s) => {
     s.running = false;
   },
-  F2: (s) => {
-    OS.fs.write(s.path, s.lines.join('\n'));
-    s.dirty = false;
-    s.status = 'Saved!';
-  },
+  F2: saveFile,
   ArrowUp: (s) => {
     if (s.cy > 0) {
       s.cy--;
@@ -143,13 +153,15 @@ const KEY_ACTIONS = {
   Tab: (s) => insertText(s, '  '),
 };
 
-function handleKey(s, key) {
+function handleKey(s, rawKey) {
   s.status = '';
+  const key = extractKey(rawKey);
+  if (!key) return;
 
   const action = KEY_ACTIONS[key];
   if (action) {
     action(s);
-  } else if (key.length === 1) {
+  } else if (key.length === 1 && key >= ' ') {
     insertText(s, key);
   }
 
