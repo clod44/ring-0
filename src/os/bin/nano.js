@@ -13,9 +13,8 @@ if (OS.fs && typeof OS.fs.isDir === 'function' && OS.fs.isDir(path)) {
     return 1;
 }
 
-const COLS = (io && io.cols) || Math.max(1, Math.floor((OS.width || 320) / 8));
-const ROWS = (io && io.rows) || Math.max(1, Math.floor((OS.height || 240) / 8));
-const VIEW_ROWS = Math.max(1, ROWS - 2);
+const getCols = () => Math.max(1, (io && io.cols) || Math.floor((OS.width || 320) / 8));
+const getRows = () => Math.max(3, (io && io.rows) || Math.floor((OS.height || 240) / 8));
 
 const THEME = {
     bg: 0,
@@ -59,6 +58,9 @@ function createState(filePath, content, initialStatus = '') {
 }
 
 function clampScroll(s) {
+    const cols = getCols();
+    const viewRows = Math.max(1, getRows() - 2);
+
     if (!Array.isArray(s.lines) || s.lines.length === 0) {
         s.lines = [''];
     }
@@ -67,11 +69,11 @@ function clampScroll(s) {
     s.cx = Math.max(0, Math.min(curLine.length, s.cx | 0));
 
     if (s.cy < s.scrollY) s.scrollY = s.cy;
-    if (s.cy >= s.scrollY + VIEW_ROWS) s.scrollY = s.cy - VIEW_ROWS + 1;
-    s.scrollY = Math.max(0, Math.min(Math.max(0, s.lines.length - VIEW_ROWS), s.scrollY));
+    if (s.cy >= s.scrollY + viewRows) s.scrollY = s.cy - viewRows + 1;
+    s.scrollY = Math.max(0, Math.min(Math.max(0, s.lines.length - viewRows), s.scrollY));
 
     if (s.cx < s.scrollX) s.scrollX = s.cx;
-    if (s.cx >= s.scrollX + COLS) s.scrollX = s.cx - COLS + 1;
+    if (s.cx >= s.scrollX + cols) s.scrollX = s.cx - cols + 1;
     s.scrollX = Math.max(0, s.scrollX);
 }
 
@@ -205,71 +207,100 @@ function handleKey(s, rawKey) {
     clampScroll(s);
 }
 
-// --- 4. RENDERER ---
+// --- 4. TTY RENDERER ---
 
-function drawHeader(s) {
-    const w = (OS.gfx && OS.gfx.width) || OS.width || COLS * 8;
-    OS.gfx.rect(0, 0, w, 8, THEME.headerBg, true);
-    const title = ` NANO  ${s.path}${s.dirty ? ' *' : ''}`;
-    OS.gfx.drawText(title.slice(0, COLS), 0, 0, THEME.headerFg, THEME.headerBg);
-}
-
-function drawViewport(s) {
-    for (let row = 0; row < VIEW_ROWS; row++) {
-        const lineIdx = s.scrollY + row;
-        if (lineIdx >= s.lines.length) break;
-
-        const visible = (s.lines[lineIdx] ?? '').slice(s.scrollX, s.scrollX + COLS);
-        OS.gfx.drawText(visible, 0, (row + 1) * 8, THEME.text, THEME.bg);
-    }
-}
-
-function drawCursor(s) {
-    const screenX = (s.cx - s.scrollX) * 8;
-    const screenY = (s.cy - s.scrollY + 1) * 8;
-    const line = s.lines[s.cy] ?? '';
-    const chUnder = line[s.cx] || ' ';
-    OS.gfx.drawChar(chUnder, screenX, screenY, THEME.bg, THEME.text);
-}
-
-function drawFooter(s) {
-    const w = (OS.gfx && OS.gfx.width) || OS.width || COLS * 8;
-    const footerY = (ROWS - 1) * 8;
-    OS.gfx.rect(0, footerY, w, 8, THEME.footerBg, true);
-
-    const left = s.status ? ` ${s.status}` : ' F2:Save  ESC:Exit';
-    const pos = `Ln ${s.cy + 1},Col ${s.cx + 1} `;
-    const pad = Math.max(1, COLS - left.length - pos.length);
-    const footer = (left + ' '.repeat(pad) + pos).slice(0, COLS);
-
-    OS.gfx.drawText(footer, 0, footerY, THEME.footerFg, THEME.footerBg);
+function writeRow(row, text, fg, bg) {
+    const cols = getCols();
+    io.setCursor(0, row);
+    const padded = String(text ?? '')
+        .slice(0, cols)
+        .padEnd(cols, ' ');
+    io.print(padded, fg, bg);
 }
 
 function render(s, cursorVisible) {
-    OS.gfx.clear(THEME.bg);
-    drawHeader(s);
-    drawViewport(s);
-    if (cursorVisible) drawCursor(s);
-    drawFooter(s);
+    if (!io || typeof io.setCursor !== 'function' || typeof io.print !== 'function') return;
+
+    const cols = getCols();
+    const rows = getRows();
+    const viewRows = Math.max(1, rows - 2);
+
+    if (typeof io.drawCursor === 'function') {
+        io.drawCursor(false);
+    }
+
+    // Header row (0)
+    const title = ` NANO  ${s.path}${s.dirty ? ' *' : ''}`;
+    writeRow(0, title, THEME.headerFg, THEME.headerBg);
+
+    // Viewport rows (1 .. rows - 2)
+    for (let row = 0; row < viewRows; row++) {
+        const lineIdx = s.scrollY + row;
+        const lineText =
+            lineIdx < s.lines.length
+                ? (s.lines[lineIdx] ?? '').slice(s.scrollX, s.scrollX + cols)
+                : '';
+        writeRow(row + 1, lineText, THEME.text, THEME.bg);
+    }
+
+    // Footer row (rows - 1)
+    const left = s.status ? ` ${s.status}` : ' F2:Save  ESC:Exit';
+    const pos = `Ln ${s.cy + 1},Col ${s.cx + 1} `;
+    const pad = Math.max(1, cols - left.length - pos.length);
+    const footer = (left + ' '.repeat(pad) + pos).slice(0, cols);
+    writeRow(rows - 1, footer, THEME.footerFg, THEME.footerBg);
+
+    // Cursor cell inside viewport
+    const curX = s.cx - s.scrollX;
+    const curY = s.cy - s.scrollY + 1;
+    if (curX >= 0 && curX < cols && curY >= 1 && curY < rows - 1) {
+        const curLine = s.lines[s.cy] ?? '';
+        const chUnder = curLine[s.cx] || ' ';
+        io.setCursor(curX, curY);
+        if (cursorVisible) {
+            io.putChar(chUnder, THEME.bg, THEME.text);
+        } else {
+            io.putChar(chUnder, THEME.text, THEME.bg);
+        }
+    }
+
+    if (typeof io.invalidate === 'function') {
+        io.invalidate();
+    }
 }
 
 // --- 5. MAIN LOOP ---
 
 const initialContent = safeReadFile(path);
 const state = createState(path, initialContent);
+clampScroll(state);
+
 let frame = 0;
 let cursorVisible = true;
 let needsRedraw = true;
 
 const keyQueue = [];
-const hasInputService = Boolean(OS.input && typeof OS.input.pushHandler === 'function');
+const useTtyQueue = Boolean(io && typeof io.pollKey === 'function' && io !== OS.tty);
+const hasInputService = Boolean(
+    !useTtyQueue && OS.input && typeof OS.input.pushHandler === 'function',
+);
 const releaseInput = hasInputService ? OS.input.pushHandler((k) => keyQueue.push(k)) : null;
 
 function drainKeys() {
+    if (useTtyQueue) {
+        return io.pollKey();
+    }
     if (hasInputService) {
         return keyQueue.length > 0 ? keyQueue.shift() : null;
     }
+    if (io && typeof io.pollKey === 'function') {
+        return io.pollKey();
+    }
     return typeof OS.pollKey === 'function' ? OS.pollKey() : null;
+}
+
+if (io && typeof io.clear === 'function') {
+    io.clear(THEME.bg);
 }
 
 try {
@@ -312,8 +343,8 @@ try {
     if (io && typeof io.clear === 'function') {
         io.clear(THEME.bg);
     }
-    if (OS.input && typeof OS.input.focus === 'function' && io) {
-        OS.input.focus(io);
+    if (io && typeof io.invalidate === 'function') {
+        io.invalidate();
     }
 }
 
