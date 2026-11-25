@@ -368,11 +368,39 @@ const fs = {
 // --- 2. 60HZ FRAME LOOP & EXECUTION ENGINE ---
 
 let frameWaiters = [];
+let nextPid = 1;
+const activeProcs = new Map();
+let currentProc = null;
 
-HW.onTick = () => {
+function flushFrameWaiters() {
     const waiters = frameWaiters;
     frameWaiters = [];
     for (const resolve of waiters) resolve();
+}
+
+function killProcTree(pid, visited = new Set()) {
+    const numPid = Number(pid);
+    if (!Number.isFinite(numPid) || visited.has(numPid)) return false;
+    visited.add(numPid);
+
+    const proc = activeProcs.get(numPid);
+    if (!proc) return false;
+
+    const childPids = Array.from(proc.children || []);
+    for (const childPid of childPids) {
+        killProcTree(childPid, visited);
+    }
+
+    proc.alive = false;
+    if (proc.parentPid !== null && activeProcs.has(proc.parentPid)) {
+        activeProcs.get(proc.parentPid).children.delete(numPid);
+    }
+    activeProcs.delete(numPid);
+    return true;
+}
+
+HW.onTick = () => {
+    flushFrameWaiters();
 };
 
 const OS = {
@@ -385,6 +413,23 @@ const OS = {
     cwd: '/',
     stdin: null,
     modules: {},
+    procs: activeProcs,
+
+    get currentProc() {
+        return currentProc;
+    },
+
+    isAlive(proc = currentProc) {
+        return !proc || proc.alive !== false;
+    },
+
+    kill(pid) {
+        const killed = killProcTree(pid);
+        if (killed) {
+            flushFrameWaiters();
+        }
+        return killed;
+    },
 
     require(path) {
         const resolved = this.resolvePath(path);
@@ -430,9 +475,29 @@ const OS = {
         if (code === null) {
             throw new Error(`OS.exec: File not found: ${path}`);
         }
-        const targetTty = tty || OS.tty || null;
+
+        const pid = nextPid++;
+        const parentPid = currentProc ? currentProc.pid : null;
+        const proc = {
+            pid,
+            parentPid,
+            children: new Set(),
+            path,
+            tty: tty || OS.tty || null,
+            startedAt: Date.now(),
+            alive: true,
+        };
+        activeProcs.set(pid, proc);
+        if (parentPid !== null && activeProcs.has(parentPid)) {
+            activeProcs.get(parentPid).children.add(pid);
+        }
+
+        const targetTty = proc.tty;
         const prevTty = OS.tty;
+        const prevProc = currentProc;
         if (targetTty) OS.tty = targetTty;
+        currentProc = proc;
+
         try {
             const program = new AsyncFunction(
                 'OS',
@@ -440,10 +505,17 @@ const OS = {
                 'env',
                 'HW',
                 'tty',
+                'proc',
                 `"use strict";\n${code}`,
             );
-            return await program(OS, args, { ...env }, HW, targetTty);
+            return await program(OS, args, { ...env }, HW, targetTty, proc);
         } finally {
+            proc.alive = false;
+            if (parentPid !== null && activeProcs.has(parentPid)) {
+                activeProcs.get(parentPid).children.delete(pid);
+            }
+            activeProcs.delete(pid);
+            currentProc = prevProc;
             OS.tty = prevTty;
         }
     },
@@ -550,11 +622,15 @@ async function runInitSession() {
             const cols = Math.max(1, Math.floor((OS.width || 320) / 8));
             const rows = Math.max(1, Math.floor((OS.height || 240) / 8));
             OS.tty = OS.createTTY(cols, rows);
+            OS.log(`BOOT: created OS.tty (${cols}x${rows})`);
         }
 
         await OS.exec('/sys/input.js');
         if (OS.input && typeof OS.input.focus === 'function' && OS.tty) {
             OS.input.focus(OS.tty);
+            const focused =
+                typeof OS.input.getFocused === 'function' ? OS.input.getFocused() : null;
+            OS.log(`BOOT: focused OS.tty (same=${focused === OS.tty})`);
         }
 
         await OS.exec('/sys/term.js');
@@ -563,6 +639,11 @@ async function runInitSession() {
         }
 
         await runInitSession();
+        const focusedAfter =
+            OS.input && typeof OS.input.getFocused === 'function' ? OS.input.getFocused() : null;
+        OS.log(
+            `BOOT: runInitSession returned (osTty=${Boolean(OS.tty)} focusedTty=${Boolean(focusedAfter)} same=${focusedAfter === OS.tty})`,
+        );
     } catch (err) {
         surfaceError('BOOT_ERR', err);
     }

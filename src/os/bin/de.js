@@ -341,6 +341,7 @@ function createWindow({
         workarea.y,
         Math.min(workarea.y + workarea.h - initH - TITLE_H - BORDER * 2, y | 0),
     );
+    const ownedPids = new Set();
 
     const win = {
         id: nextWinId++,
@@ -357,6 +358,13 @@ function createWindow({
         buf: gfx.createBuffer(initW * scale, initH * scale, scale),
         dirty: true,
         app: {},
+        trackPid(pid) {
+            const numPid = Number(pid);
+            if (Number.isFinite(numPid) && numPid > 0) {
+                ownedPids.add(numPid);
+            }
+            return pid;
+        },
         setTitle(nextTitle) {
             this.title = String(nextTitle || '');
             emit('window:title', this);
@@ -424,6 +432,14 @@ function createWindow({
             if (idx === -1) return;
             clearPointerCaptureFor(this);
             windows.splice(idx, 1);
+
+            if (typeof OS.kill === 'function') {
+                for (const pid of ownedPids) {
+                    OS.kill(pid);
+                }
+            }
+            ownedPids.clear();
+
             if (typeof this.app.destroy === 'function') {
                 try {
                     this.app.destroy(this, api);
@@ -623,6 +639,13 @@ const api = {
     spawnWindow(opts) {
         return createWindow(opts);
     },
+    trackPid(pid, targetWin = null) {
+        const win = targetWin || api.getFocusedWindow();
+        if (win && typeof win.trackPid === 'function') {
+            return win.trackPid(pid);
+        }
+        return pid;
+    },
     showError(title, err) {
         return showErrorPopup(title, err);
     },
@@ -805,20 +828,6 @@ try {
                 }
 
                 if (!handled && (key === 'Escape' || key === 'F10')) {
-                    for (let i = windows.length - 1; i >= 0; i--) {
-                        if (typeof windows[i].app.destroy === 'function') {
-                            try {
-                                windows[i].app.destroy(windows[i], api);
-                            } catch (err) {
-                                OS.log(`DE: destroy error: ${formatErrDetail(err)}`);
-                            }
-                        }
-                    }
-                    windows.length = 0;
-                    vram.set(savedVram);
-                    if (OS.tty && typeof OS.tty.invalidate === 'function') {
-                        OS.tty.invalidate();
-                    }
                     shouldExit = true;
                     break;
                 }
@@ -1037,6 +1046,13 @@ try {
         await OS.nextFrame();
     }
 } finally {
+    for (const w of windows.slice()) {
+        try {
+            w.close();
+        } catch (err) {
+            OS.log(`DE: window close error: ${formatErrDetail(err)}`);
+        }
+    }
     for (let i = plugins.length - 1; i >= 0; i--) {
         if (plugins[i].destroy) {
             try {
@@ -1047,9 +1063,22 @@ try {
         }
     }
     if (typeof releaseInput === 'function') {
-        releaseInput();
+        try {
+            releaseInput();
+        } catch (err) {
+            OS.log(`DE: releaseInput error: ${formatErrDetail(err)}`);
+        }
     }
     if (OS.input && typeof OS.input.focus === 'function' && OS.tty) {
         OS.input.focus(OS.tty);
     }
+    vram.set(savedVram);
+    if (OS.tty && typeof OS.tty.invalidate === 'function') {
+        OS.tty.invalidate();
+    }
+    const focusedAfter =
+        OS.input && typeof OS.input.getFocused === 'function' ? OS.input.getFocused() : null;
+    OS.log(
+        `DE EXIT: osTty=${Boolean(OS.tty)} focusedTty=${Boolean(focusedAfter)} same=${focusedAfter === OS.tty}`,
+    );
 }
