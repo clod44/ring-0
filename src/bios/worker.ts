@@ -148,3 +148,21 @@ self.onmessage = (e: MessageEvent) => {
         self.postMessage({ type: "REBOOT", disk: disk });
     }
 };
+
+// Expose all logs
+function forwardLog(level: string, args: unknown[]) {
+    const line = args.map((
+        a,
+    ) => (typeof a === "object" && a !== null ? JSON.stringify(a) : String(a)))
+        .join(" ");
+    self.postMessage({ type: "CONSOLE", text: `[${level}] ${line}` });
+}
+
+for (const lvl of ["log", "warn", "error"] as const) {
+    const orig = console[lvl].bind(console);
+    console[lvl] = (...args) => {
+        orig(...args);
+        forwardLog(lvl.toUpperCase(), args);
+    };
+}
+self.addEventListener("error", (e) => forwardLog("ERR", [e.message]));

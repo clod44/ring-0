@@ -81,6 +81,8 @@ function bootMachine(existingDisk?: Uint8Array) {
     type: "module",
   });
 
+  const consoleOut = document.getElementById("console-output");
+
   worker.onmessage = (e: MessageEvent) => {
     if (e.data.type === "FRAME") {
       display.render(e.data.vram);
@@ -89,6 +91,9 @@ function bootMachine(existingDisk?: Uint8Array) {
       diskIo.setDisk(e.data.disk);
     } else if (e.data.type === "REBOOT") {
       bootMachine(e.data.disk);
+    } else if (e.data.type === "CONSOLE" && consoleOut) {
+      consoleOut.textContent += e.data.text + "\n";
+      consoleOut.scrollTop = consoleOut.scrollHeight;
     }
   };
 
