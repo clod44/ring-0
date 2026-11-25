@@ -34,6 +34,14 @@
             "mode": "window",
             "w": 200,
             "h": 120
+        },
+        {
+            "id": "cubeapp",
+            "name": "Cube App",
+            "exec": "/apps/cubeapp.js",
+            "mode": "window",
+            "w": 200,
+            "h": 120
         }
     ]
 }
