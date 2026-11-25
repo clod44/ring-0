@@ -1,46 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>RING-0 // Terminal</title>
+        <link rel="stylesheet" href="/src/styles.css" />
     </head>
-    <body class="bg-zinc-950 text-zinc-200 font-mono min-h-screen px-3 py-4 sm:px-6 sm:py-8">
-        <div class="w-full max-w-4xl mx-auto flex flex-col gap-6">
-            <!-- TERMINAL -->
-            <main class="bg-zinc-900/70 border border-zinc-800 rounded p-3 flex flex-col gap-3">
-                <div class="flex items-center justify-between text-xs">
-                    <span class="font-bold text-emerald-400">
-                        RING-0 -
-                        <a
-                            id="build-info"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="text-zinc-500 hover:text-zinc-300 underline-offset-2 hover:underline truncate max-w-[14rem] sm:max-w-xs"
-                        ></a>
-                    </span>
-                    <div class="flex items-center gap-2">
-                        <button
-                            id="reboot-btn"
-                            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 rounded cursor-pointer"
-                        >
-                            REBOOT
-                        </button>
-                        <button
-                            id="reset-btn"
-                            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-red-300 border border-zinc-700 rounded cursor-pointer"
-                        >
-                            HARD RESET
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Tap canvas on mobile to focus hidden input & raise keyboard -->
-                <div id="screen-wrap" class="relative w-full">
+    <body
+        class="bg-black text-zinc-100 font-mono antialiased selection:bg-emerald-500/20 selection:text-emerald-300"
+    >
+        <!-- FULL-VIEWPORT AMOLED TERMINAL STAGE -->
+        <main
+            class="relative min-h-[100dvh] w-full flex flex-col items-center justify-between px-3 py-2.5 gap-2"
+        >
+            <!-- Canvas -->
+            <div class="flex-1 w-full flex items-center justify-center min-h-0">
+                <div
+                    id="screen-wrap"
+                    class="relative"
+                    style="width: min(96vw, calc((100dvh - 4.25rem) * 4 / 3)); aspect-ratio: 4 / 3"
+                >
                     <canvas
                         id="screen"
                         tabindex="0"
-                        class="block w-full aspect-[4/3] bg-black border border-zinc-800 rounded outline-none focus:border-emerald-500 [image-rendering:pixelated]"
+                        class="block w-full h-full bg-black rounded-lg border border-zinc-800/90 outline-none focus:border-emerald-400/80 transition-colors"
                     ></canvas>
                     <input
                         id="kbd-proxy"
@@ -53,120 +36,181 @@
                         class="absolute inset-0 w-full h-full opacity-0 cursor-text pointer-events-none"
                     />
                 </div>
+            </div>
 
-                <!-- Touch helper keys (shown on touch/small screens, hidden on desktop) -->
-                <div
-                    id="mobile-keys"
-                    class="flex md:hidden items-center gap-1.5 overflow-x-auto text-xs select-none"
+            <!-- Mobile touch keys -->
+            <div
+                id="mobile-keys"
+                class="w-full max-w-5xl flex md:hidden items-center gap-1.5 overflow-x-auto text-xs select-none"
+            >
+                <button
+                    data-key="Escape"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
                 >
+                    ESC
+                </button>
+                <button
+                    data-key="F2"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    F2
+                </button>
+                <button
+                    data-key="Tab"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    TAB
+                </button>
+                <button
+                    id="ctrl-toggle"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    CTRL
+                </button>
+                <button
+                    data-key="ArrowLeft"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    &larr;
+                </button>
+                <button
+                    data-key="ArrowDown"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    &darr;
+                </button>
+                <button
+                    data-key="ArrowUp"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    &uarr;
+                </button>
+                <button
+                    data-key="ArrowRight"
+                    class="px-2.5 py-1.5 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 border border-zinc-800 text-zinc-200"
+                >
+                    &rarr;
+                </button>
+            </div>
+
+            <!-- Bottom status & actions bar -->
+            <footer class="w-full max-w-5xl flex items-center justify-between gap-3 px-1 text-xs">
+                <div class="flex items-center gap-2 min-w-0">
+                    <span
+                        class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"
+                    ></span>
+                    <span class="font-semibold tracking-tight text-zinc-100 shrink-0">RING-0</span>
+                    <a
+                        id="build-info"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="text-zinc-500 hover:text-zinc-300 truncate transition-colors"
+                    ></a>
+                </div>
+
+                <div class="flex items-center gap-2 shrink-0">
                     <button
-                        data-key="Escape"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
+                        id="toggle-disk-drawer"
+                        type="button"
+                        class="px-2.5 py-1 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 text-emerald-300 border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-colors"
                     >
-                        ESC
+                        DISK
                     </button>
                     <button
-                        data-key="F2"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
+                        id="reboot-btn"
+                        type="button"
+                        class="px-2.5 py-1 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 text-amber-300 border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-colors"
                     >
-                        F2
+                        REBOOT
                     </button>
                     <button
-                        data-key="Tab"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
+                        id="reset-btn"
+                        type="button"
+                        class="px-2.5 py-1 rounded-md bg-[#0a0a0c] hover:bg-zinc-900 text-rose-300 border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-colors"
                     >
-                        TAB
-                    </button>
-                    <button
-                        id="ctrl-toggle"
-                        class="px-2.5 py-1.5 bg-zinc-800 border border-zinc-700 rounded"
-                    >
-                        CTRL
-                    </button>
-                    <button
-                        data-key="ArrowLeft"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
-                    >
-                        &larr;
-                    </button>
-                    <button
-                        data-key="ArrowDown"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
-                    >
-                        &darr;
-                    </button>
-                    <button
-                        data-key="ArrowUp"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
-                    >
-                        &uarr;
-                    </button>
-                    <button
-                        data-key="ArrowRight"
-                        class="px-2.5 py-1.5 bg-zinc-800 active:bg-zinc-700 border border-zinc-700 rounded"
-                    >
-                        &rarr;
+                        HARD RESET
                     </button>
                 </div>
-            </main>
+            </footer>
+        </main>
 
-            <!-- DISK INSPECTOR -->
-            <section class="bg-zinc-900/70 border border-zinc-800 rounded p-3 flex flex-col gap-4">
-                <header class="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <h2 class="text-xs font-bold text-emerald-400">DISK // /DEV/HD0</h2>
-                    <div class="flex items-center gap-2 text-xs">
-                        <span id="disk-stats" class="text-zinc-400">Used: --</span>
-                        <button
-                            id="refresh-disk-btn"
-                            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded cursor-pointer"
-                        >
-                            REFRESH
-                        </button>
-                        <button
-                            id="download-disk-btn"
-                            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-300 border border-zinc-700 rounded cursor-pointer"
-                        >
-                            EXPORT
-                        </button>
-                        <button
-                            id="upload-disk-btn"
-                            class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-sky-300 border border-zinc-700 rounded cursor-pointer"
-                        >
-                            IMPORT
-                        </button>
-                        <input
-                            id="disk-file-input"
-                            type="file"
-                            accept=".img,.bin,application/octet-stream"
-                            class="hidden"
-                        />
-                    </div>
-                </header>
-
-                <!-- Widget 1: Full Disk Bitmap + Bitwise Inspector -->
-                <div class="flex flex-col gap-3">
-                    <div
-                        class="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400"
+        <!-- SLIDE-OVER DISK INSPECTOR DRAWER -->
+        <div id="disk-backdrop" class="fixed inset-0 z-40 bg-black/75 hidden"></div>
+        <aside
+            id="disk-drawer"
+            aria-label="Disk Inspector"
+            class="fixed top-0 right-0 z-50 h-full w-full max-w-2xl bg-[#070709] border-l border-zinc-800/90 translate-x-full transition-transform duration-200 flex flex-col overflow-hidden"
+        >
+            <header
+                class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-zinc-800/90 bg-black"
+            >
+                <div class="flex items-center gap-2.5">
+                    <h2 class="text-xs font-semibold tracking-wider text-emerald-400">
+                        /DEV/HD0 INSPECTOR
+                    </h2>
+                    <span id="disk-stats" class="text-[11px] text-zinc-500">Used: --</span>
+                </div>
+                <div class="flex items-center gap-1.5 text-xs">
+                    <button
+                        id="refresh-disk-btn"
+                        class="px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 text-zinc-300 border border-zinc-800 cursor-pointer"
                     >
-                        <span>1. FULL DISK MAP (CLICK ANY SECTOR)</span>
+                        REFRESH
+                    </button>
+                    <button
+                        id="download-disk-btn"
+                        class="px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 text-emerald-300 border border-zinc-800 cursor-pointer"
+                    >
+                        EXPORT
+                    </button>
+                    <button
+                        id="upload-disk-btn"
+                        class="px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 text-sky-300 border border-zinc-800 cursor-pointer"
+                    >
+                        IMPORT
+                    </button>
+                    <button
+                        id="close-disk-drawer"
+                        type="button"
+                        aria-label="Close disk inspector"
+                        class="ml-1 px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 text-zinc-400 hover:text-zinc-100 border border-zinc-800 cursor-pointer"
+                    >
+                        ESC / X
+                    </button>
+                    <input
+                        id="disk-file-input"
+                        type="file"
+                        accept=".img,.bin,application/octet-stream"
+                        class="hidden"
+                    />
+                </div>
+            </header>
+
+            <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+                <!-- Sector Bitmap -->
+                <section
+                    class="rounded-lg border border-zinc-800/80 bg-black p-3 flex flex-col gap-2.5"
+                >
+                    <div
+                        class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400"
+                    >
+                        <span>SECTOR BITMAP</span>
                         <div class="flex flex-wrap items-center gap-3">
-                            <span class="flex items-center gap-1.5"
-                                ><span class="w-2 h-2 bg-amber-500 inline-block"></span>MBR
-                                (0)</span
-                            >
-                            <span class="flex items-center gap-1.5"
-                                ><span class="w-2 h-2 bg-sky-400 inline-block"></span>Table
-                                (1-16)</span
-                            >
-                            <span class="flex items-center gap-1.5"
-                                ><span class="w-2 h-2 bg-emerald-400 inline-block"></span>Data</span
-                            >
-                            <span class="flex items-center gap-1.5"
-                                ><span
-                                    class="w-2 h-2 bg-zinc-800 inline-block border border-zinc-700"
+                            <span class="inline-flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-[1px] bg-amber-500"></span>MBR (0)
+                            </span>
+                            <span class="inline-flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-[1px] bg-sky-400"></span>Table (1-16)
+                            </span>
+                            <span class="inline-flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-[1px] bg-emerald-400"></span>Data
+                            </span>
+                            <span class="inline-flex items-center gap-1.5">
+                                <span
+                                    class="w-2 h-2 rounded-[1px] bg-zinc-900 border border-zinc-700"
                                 ></span
-                                >Empty</span
-                            >
+                                >Empty
+                            </span>
                         </div>
                     </div>
 
@@ -174,80 +218,108 @@
                         id="disk-map"
                         width="768"
                         height="192"
-                        class="w-full h-auto cursor-crosshair border border-zinc-800 rounded bg-zinc-950 [image-rendering:pixelated]"
+                        class="w-full h-auto cursor-crosshair rounded border border-zinc-800/90 bg-black"
                     ></canvas>
 
-                    <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <div class="flex flex-wrap items-center gap-2 text-xs pt-0.5">
                         <button
                             id="prev-sector"
-                            class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded cursor-pointer"
+                            class="px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 border border-zinc-800 cursor-pointer"
                         >
                             &lt; PREV
                         </button>
-                        <label class="flex items-center gap-1.5 text-zinc-400">
-                            SECTOR:
+                        <label class="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
+                            SECTOR
                             <input
                                 id="sector-input"
                                 type="number"
                                 min="0"
                                 max="4095"
                                 value="0"
-                                class="w-16 bg-zinc-950 text-emerald-400 border border-zinc-700 rounded px-1.5 py-0.5 outline-none focus:border-emerald-500"
+                                class="w-16 rounded bg-[#070709] text-emerald-400 border border-zinc-800 px-1.5 py-0.5 outline-none focus:border-emerald-400"
                             />
                         </label>
                         <button
                             id="next-sector"
-                            class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded cursor-pointer"
+                            class="px-2 py-1 rounded bg-[#0c0c0f] hover:bg-zinc-900 border border-zinc-800 cursor-pointer"
                         >
                             NEXT &gt;
                         </button>
-                        <span id="sector-owner" class="text-zinc-500"
-                            >Region: MBR (Bootloader)</span
-                        >
+                        <span id="sector-owner" class="text-[11px] text-zinc-500 truncate">
+                            Region: MBR (Bootloader)
+                        </span>
                     </div>
 
                     <pre
                         id="bit-dump"
-                        class="bg-zinc-950 border border-zinc-800 rounded p-2.5 max-h-60 overflow-auto text-[11px] leading-relaxed text-lime-400"
+                        class="rounded border border-zinc-800/80 bg-[#050507] p-2.5 max-h-52 overflow-auto text-[11px] leading-relaxed text-lime-400"
                     ></pre>
-                </div>
+                </section>
 
-                <!-- Widget 2: Parsed Disk Sections -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div class="flex flex-col gap-2">
-                        <div class="text-xs text-zinc-400">2A. SECTOR 0 // MBR BOOTLOADER</div>
+                <!-- MBR + File Table -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <section
+                        class="rounded-lg border border-zinc-800/80 bg-black p-3 flex flex-col gap-2"
+                    >
+                        <div class="text-[11px] text-zinc-400">SECTOR 0 // MBR</div>
                         <pre
                             id="mbr-preview"
-                            class="bg-zinc-950 border border-zinc-800 rounded p-2.5 h-60 overflow-auto text-[11px] text-amber-400 whitespace-pre-wrap"
+                            class="rounded border border-zinc-800/80 bg-[#050507] p-2.5 h-52 overflow-auto text-[11px] text-amber-400 whitespace-pre-wrap"
                         ></pre>
-                    </div>
+                    </section>
 
-                    <div class="flex flex-col gap-2">
-                        <div class="text-xs text-zinc-400">
-                            2B. SECTORS 1-16 // PARSED FILE TABLE
-                        </div>
-                        <div class="h-60 overflow-auto border border-zinc-800 rounded bg-zinc-950">
-                            <table class="w-full text-left text-xs border-collapse">
+                    <section
+                        class="rounded-lg border border-zinc-800/80 bg-black p-3 flex flex-col gap-2"
+                    >
+                        <div class="text-[11px] text-zinc-400">SECTORS 1-16 // FILE TABLE</div>
+                        <div
+                            class="h-52 overflow-auto rounded border border-zinc-800/80 bg-[#050507]"
+                        >
+                            <table class="w-full text-left text-[11px] border-collapse">
                                 <thead
-                                    class="sticky top-0 bg-zinc-900 text-zinc-400 border-b border-zinc-800"
+                                    class="sticky top-0 bg-[#0c0c0f] text-zinc-400 border-b border-zinc-800"
                                 >
                                     <tr>
-                                        <th class="py-1.5 px-2 font-normal">PATH</th>
-                                        <th class="py-1.5 px-2 font-normal">TYPE</th>
-                                        <th class="py-1.5 px-2 font-normal">START</th>
-                                        <th class="py-1.5 px-2 font-normal">SIZE</th>
+                                        <th class="py-1.5 px-2 font-medium">PATH</th>
+                                        <th class="py-1.5 px-2 font-medium">TYPE</th>
+                                        <th class="py-1.5 px-2 font-medium">START</th>
+                                        <th class="py-1.5 px-2 font-medium">SIZE</th>
                                     </tr>
                                 </thead>
                                 <tbody
                                     id="fs-table-body"
-                                    class="[&_tr]:cursor-pointer [&_tr:hover]:bg-zinc-800/80 [&_td]:py-1 [&_td]:px-2 [&_td]:border-b [&_td]:border-zinc-900"
+                                    class="[&_tr]:cursor-pointer [&_tr:hover]:bg-zinc-900 [&_td]:py-1 [&_td]:px-2 [&_td]:border-b [&_td]:border-zinc-900/90"
                                 ></tbody>
                             </table>
                         </div>
-                    </div>
+                    </section>
                 </div>
-            </section>
-        </div>
+            </div>
+        </aside>
+
+        <script>
+            (() => {
+                const drawer = document.getElementById('disk-drawer');
+                const backdrop = document.getElementById('disk-backdrop');
+                const openBtn = document.getElementById('toggle-disk-drawer');
+                const closeBtn = document.getElementById('close-disk-drawer');
+                if (!drawer || !backdrop || !openBtn || !closeBtn) return;
+
+                const setOpen = (open) => {
+                    drawer.classList.toggle('translate-x-full', !open);
+                    backdrop.classList.toggle('hidden', !open);
+                };
+
+                openBtn.addEventListener('click', () => setOpen(true));
+                closeBtn.addEventListener('click', () => setOpen(false));
+                backdrop.addEventListener('click', () => setOpen(false));
+                window.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && !drawer.classList.contains('translate-x-full')) {
+                        setOpen(false);
+                    }
+                });
+            })();
+        </script>
 
         <script type="module" src="/src/main.ts"></script>
     </body>
