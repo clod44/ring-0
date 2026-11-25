@@ -1,0 +1,5 @@
+{
+    "entry": "/bin/de.js",
+    "fallback": "/bin/shell.js",
+    "respawn": true
+}

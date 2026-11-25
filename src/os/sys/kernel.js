@@ -483,6 +483,63 @@ function surfaceError(tag, err) {
 }
 
 // --- 3. KERNEL BOOT SEQUENCE ---
+const DEFAULT_INIT_CFG = {
+    entry: '/bin/shell.js',
+    fallback: null,
+    respawn: true,
+};
+
+function loadInitConfig() {
+    const raw = fs.read('/etc/init.json');
+    if (!raw) return { ...DEFAULT_INIT_CFG };
+
+    try {
+        const parsed = JSON.parse(raw);
+        return {
+            entry:
+                typeof parsed.entry === 'string' && parsed.entry.trim()
+                    ? parsed.entry.trim()
+                    : DEFAULT_INIT_CFG.entry,
+            fallback:
+                typeof parsed.fallback === 'string' && parsed.fallback.trim()
+                    ? parsed.fallback.trim()
+                    : null,
+            respawn:
+                typeof parsed.respawn === 'boolean' ? parsed.respawn : DEFAULT_INIT_CFG.respawn,
+        };
+    } catch (err) {
+        OS.log(`KERNEL: failed to parse /etc/init.json: ${err && err.message ? err.message : err}`);
+        return { ...DEFAULT_INIT_CFG };
+    }
+}
+
+async function runInitSession() {
+    const cfg = loadInitConfig();
+
+    do {
+        let failed = false;
+        try {
+            await OS.exec(cfg.entry, [], OS.env || {});
+        } catch (err) {
+            failed = true;
+            surfaceError('INIT_PROC', err);
+        }
+
+        if (cfg.fallback && cfg.fallback !== cfg.entry) {
+            try {
+                await OS.exec(cfg.fallback, [], OS.env || {});
+            } catch (fbErr) {
+                failed = true;
+                surfaceError('FALLBACK_PROC', fbErr);
+            }
+        }
+
+        if (failed) {
+            await OS.nextFrame();
+        }
+    } while (cfg.respawn);
+}
+
 (async function boot() {
     try {
         OS.log('KERNEL: OS.fs & OS.exec online.');
@@ -505,15 +562,7 @@ function surfaceError(tag, err) {
             OS.term.start(OS.tty).catch((err) => surfaceError('TERM_LOOP', err));
         }
 
-        while (true) {
-            try {
-                await OS.exec('/bin/de.js', [], {});
-                break;
-            } catch (shellErr) {
-                surfaceError('SHELL_CRASH', shellErr);
-                await OS.nextFrame();
-            }
-        }
+        await runInitSession();
     } catch (err) {
         surfaceError('BOOT_ERR', err);
     }
