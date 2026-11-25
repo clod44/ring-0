@@ -1,8 +1,17 @@
 // GNU Readline-style line editor & history library
 
 function createHistory(filePath, limit = 100) {
-    const raw = OS.fs.read(filePath);
-    const items = raw ? raw.split('\n').filter(Boolean) : [];
+    let items = [];
+    try {
+        if (filePath && OS.fs && typeof OS.fs.read === 'function') {
+            const raw = OS.fs.read(filePath);
+            if (typeof raw === 'string') {
+                items = raw.split('\n').filter(Boolean).slice(-limit);
+            }
+        }
+    } catch (_) {
+        items = [];
+    }
 
     return {
         items,
@@ -10,13 +19,17 @@ function createHistory(filePath, limit = 100) {
             if (!line || items[items.length - 1] === line) return;
             items.push(line);
             if (items.length > limit) items.shift();
-            OS.fs.write(filePath, items.join('\n'));
+            try {
+                if (filePath && OS.fs && typeof OS.fs.write === 'function') {
+                    OS.fs.write(filePath, items.join('\n'));
+                }
+            } catch (_) {}
         },
     };
 }
 
 function longestCommonPrefix(list) {
-    if (list.length === 0) return '';
+    if (!Array.isArray(list) || list.length === 0) return '';
     let prefix = list[0];
     for (let i = 1; i < list.length; i++) {
         while (!list[i].startsWith(prefix)) {
@@ -27,7 +40,15 @@ function longestCommonPrefix(list) {
     return prefix;
 }
 
+function nextKey(tty) {
+    if (tty && typeof tty.pollKey === 'function') {
+        return tty.pollKey();
+    }
+    return typeof OS.pollKey === 'function' ? OS.pollKey() : null;
+}
+
 async function readLine({
+    tty = OS.tty,
     prompt = '',
     history = [],
     complete = null,
@@ -36,23 +57,27 @@ async function readLine({
     promptColor = 214,
     dimColor = 8,
 } = {}) {
-    const COLS = OS.tty.cols;
-    const ROWS = OS.tty.rows;
+    const dev = tty || OS.tty;
+    if (!dev) return '';
 
-    OS.tty.print(prompt, promptColor, bg);
-    let { x: startX, y: startY } = OS.tty.getCursor();
+    const COLS = dev.cols || 40;
+    const ROWS = dev.rows || 30;
+    const histList = Array.isArray(history) ? history : [];
+
+    dev.print(prompt, promptColor, bg);
+    let { x: startX, y: startY } = dev.getCursor();
 
     const state = {
         buffer: '',
         pos: 0,
         prevLen: 0,
         draft: '',
-        histIdx: history.length,
+        histIdx: histList.length,
     };
 
     const moveTo = (offset) => {
         const total = startX + offset;
-        OS.tty.setCursor(total % COLS, startY + Math.floor(total / COLS));
+        dev.setCursor(total % COLS, startY + Math.floor(total / COLS));
     };
 
     const redraw = () => {
@@ -60,11 +85,11 @@ async function readLine({
         const endRow = startY + Math.floor((startX + maxLen) / COLS);
         const overflow = Math.max(0, endRow - (ROWS - 1));
 
-        OS.tty.setCursor(startX, startY);
-        OS.tty.print(state.buffer, fg, bg);
+        dev.setCursor(startX, startY);
+        dev.print(state.buffer, fg, bg);
 
         if (state.prevLen > state.buffer.length) {
-            OS.tty.print(' '.repeat(state.prevLen - state.buffer.length), fg, bg);
+            dev.print(' '.repeat(state.prevLen - state.buffer.length), fg, bg);
         }
 
         if (overflow > 0) startY = Math.max(0, startY - overflow);
@@ -74,8 +99,8 @@ async function readLine({
     };
 
     const setBuffer = (text) => {
-        state.buffer = text;
-        state.pos = text.length;
+        state.buffer = String(text ?? '');
+        state.pos = state.buffer.length;
         redraw();
     };
 
@@ -85,7 +110,6 @@ async function readLine({
         redraw();
     };
 
-    // Readline keymap
     const keymap = {
         ArrowLeft() {
             if (state.pos > 0) moveTo(--state.pos);
@@ -112,20 +136,24 @@ async function readLine({
         },
         ArrowUp() {
             if (state.histIdx > 0) {
-                if (state.histIdx === history.length) state.draft = state.buffer;
-                setBuffer(history[--state.histIdx]);
+                if (state.histIdx === histList.length) state.draft = state.buffer;
+                setBuffer(histList[--state.histIdx]);
             }
         },
         ArrowDown() {
-            if (state.histIdx < history.length) {
+            if (state.histIdx < histList.length) {
                 state.histIdx++;
-                setBuffer(state.histIdx === history.length ? state.draft : history[state.histIdx]);
+                setBuffer(
+                    state.histIdx === histList.length ? state.draft : histList[state.histIdx],
+                );
             }
         },
         Tab() {
-            if (!complete) return;
-            const { wordStart, word, matches, isDir } = complete(state.buffer, state.pos);
-            if (matches.length === 0) return;
+            if (typeof complete !== 'function') return;
+            const res = complete(state.buffer, state.pos);
+            if (!res || !Array.isArray(res.matches) || res.matches.length === 0) return;
+
+            const { wordStart = state.pos, word = '', matches, isDir } = res;
 
             if (matches.length === 1) {
                 const suffix = isDir && isDir(matches[0]) ? '' : ' ';
@@ -139,12 +167,11 @@ async function readLine({
                 return;
             }
 
-            // List all candidates below and reprint prompt
             moveTo(state.buffer.length);
-            OS.tty.putChar('\n', fg, bg);
-            OS.tty.println(matches.join('  '), dimColor, bg);
-            OS.tty.print(prompt, promptColor, bg);
-            ({ x: startX, y: startY } = OS.tty.getCursor());
+            dev.putChar('\n', fg, bg);
+            dev.println(matches.join('  '), dimColor, bg);
+            dev.print(prompt, promptColor, bg);
+            ({ x: startX, y: startY } = dev.getCursor());
             state.prevLen = 0;
             redraw();
         },
@@ -152,34 +179,34 @@ async function readLine({
 
     let frame = 0;
     let cursorVisible = true;
-    OS.tty.drawCursor(true);
+    dev.drawCursor(true);
 
     while (true) {
         let key;
-        while ((key = OS.pollKey()) !== null) {
-            OS.tty.drawCursor(false);
+        while ((key = nextKey(dev)) !== null) {
+            dev.drawCursor(false);
             frame = 0;
             cursorVisible = true;
 
             if (key === 'Enter') {
                 moveTo(state.buffer.length);
-                OS.tty.putChar('\n', fg, bg);
+                dev.putChar('\n', fg, bg);
                 return state.buffer;
             }
 
             if (keymap[key]) {
                 keymap[key]();
-            } else if (key.length === 1) {
+            } else if (typeof key === 'string' && key.length === 1) {
                 replaceRange(state.pos, state.pos, key);
             }
 
-            OS.tty.drawCursor(true);
+            dev.drawCursor(true);
         }
 
         frame++;
         if (frame % 30 === 0) {
             cursorVisible = !cursorVisible;
-            OS.tty.drawCursor(cursorVisible);
+            dev.drawCursor(cursorVisible);
         }
 
         await OS.nextFrame();

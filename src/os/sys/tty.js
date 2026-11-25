@@ -1,8 +1,5 @@
-// /sys/tty.js
-// Factory for independent VGA-style text TTY instances + default OS.tty.
-
-const DEFAULT_FG = 15; // White
-const DEFAULT_BG = 0; // Black
+const DEFAULT_FG = 15;
+const DEFAULT_BG = 0;
 const CELL_W = 8;
 const CELL_H = 8;
 
@@ -13,7 +10,7 @@ function createTTY(cols, rows, opts = {}) {
     const defaultFg = opts.defaultFg ?? DEFAULT_FG;
     const defaultBg = opts.defaultBg ?? DEFAULT_BG;
 
-    const chars = new Uint8Array(cells).fill(32); // ASCII 32 = ' '
+    const chars = new Uint8Array(cells).fill(32);
     const fgs = new Uint8Array(cells).fill(defaultFg);
     const bgs = new Uint8Array(cells).fill(defaultBg);
 
@@ -22,7 +19,6 @@ function createTTY(cols, rows, opts = {}) {
     let cursorVisible = true;
     let dirty = true;
 
-    // Per-TTY input queue so unfocused sessions never steal keys or blink wildly
     const keyQueue = [];
 
     function cellIndex(x, y) {
@@ -168,8 +164,8 @@ function createTTY(cols, rows, opts = {}) {
             }
         },
 
-        println(text = '', fg = defaultBg ? defaultFg : DEFAULT_FG, bg = defaultBg) {
-            this.print(text + '\n', fg, bg);
+        println(text = '', fg = defaultFg, bg = defaultBg) {
+            this.print(String(text) + '\n', fg, bg);
         },
 
         backspace(fg = defaultFg, bg = defaultBg) {
@@ -222,8 +218,8 @@ function createTTY(cols, rows, opts = {}) {
     };
 }
 
-const defaultCols = Math.floor(OS.width / CELL_W);
-const defaultRows = Math.floor(OS.height / CELL_H);
+const defaultCols = Math.max(1, Math.floor((OS.width || 320) / CELL_W));
+const defaultRows = Math.max(1, Math.floor((OS.height || 240) / CELL_H));
 
 OS.createTTY = createTTY;
 OS.tty = createTTY(defaultCols, defaultRows);

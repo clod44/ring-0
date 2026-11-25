@@ -1,11 +1,12 @@
 function createTerminalRenderer(tty, opts = {}) {
+    const dev = tty || OS.tty;
     const cellW = opts.cellW || 8;
     const cellH = opts.cellH || 8;
     const target = opts.target || null;
 
     function renderAll() {
-        const { cols, rows, chars, fgs, bgs } = tty;
-        const cur = tty.getCursor();
+        const { cols, rows, chars, fgs, bgs } = dev;
+        const cur = dev.getCursor();
 
         for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
@@ -21,24 +22,31 @@ function createTerminalRenderer(tty, opts = {}) {
     }
 
     function render() {
-        if (!tty.dirty) return;
+        if (!dev.dirty) return;
         if (target) {
             OS.gfx.withTarget(target, renderAll);
         } else {
             renderAll();
         }
-        tty.markClean();
+        dev.markClean();
     }
 
     return { render };
 }
 
-async function start(tty = OS.tty, opts = {}) {
-    const renderer = createTerminalRenderer(tty, opts);
-    tty.invalidate();
+async function start(tty, opts = {}) {
+    const dev = tty || OS.tty;
+    const renderer = createTerminalRenderer(dev, opts);
+    dev.invalidate();
 
     while (true) {
-        renderer.render();
+        try {
+            renderer.render();
+        } catch (err) {
+            if (OS && typeof OS.log === 'function') {
+                OS.log('TERM_ERR: ' + (err && err.message ? err.message : err));
+            }
+        }
         await OS.nextFrame();
     }
 }

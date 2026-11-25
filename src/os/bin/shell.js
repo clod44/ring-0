@@ -1,35 +1,73 @@
 const { createHistory, readLine } = OS.require('/lib/readline.js');
 
-const tty = OS.tty;
+const io = (typeof tty !== 'undefined' && tty) || OS.tty;
 env = env || (OS.env ??= {});
-
-// --- 1. CONFIG, THEME & ENV ---
 
 const THEME = {
     bg: 0,
-    banner: 10, // Bright Green
-    prompt: 214, // Amber
-    input: 15, // White
-    text: 15, // White
-    dim: 8, // Gray
-    warn: 11, // Yellow
-    error: 9, // Bright Red
+    banner: 10,
+    prompt: 214,
+    input: 15,
+    text: 15,
+    dim: 8,
+    warn: 11,
+    error: 9,
 };
 
 if (!env.PATH) env.PATH = '/bin:/usr/bin';
 if (!env.HISTFILE) env.HISTFILE = '/tmp/history';
 env['?'] = '0';
 
-const history = createHistory(env.HISTFILE, 100);
+function warn(msg) {
+    try {
+        if (io && typeof io.println === 'function') {
+            io.println(`WARN: ${msg}`, THEME.warn);
+        }
+        if (typeof OS.log === 'function') {
+            OS.log(`SHELL WARN: ${msg}`);
+        }
+    } catch (_) {}
+}
 
-// --- 2. BUILTINS ---
+function reportError(msg, err = null) {
+    const detail = err && err.message ? `${msg}: ${err.message}` : msg;
+    try {
+        if (io && typeof io.println === 'function') {
+            io.println(detail, THEME.error);
+        }
+        if (typeof OS.log === 'function') {
+            OS.log(`SHELL ERR: ${err && err.stack ? err.stack : detail}`);
+        }
+    } catch (_) {}
+}
+
+function initHistory(filePath, limit = 100) {
+    try {
+        if (typeof createHistory === 'function') {
+            return createHistory(filePath, limit);
+        }
+    } catch (err) {
+        warn(`History unavailable (${err.message}); using memory only`);
+    }
+    const items = [];
+    return {
+        items,
+        add(line) {
+            if (!line || items[items.length - 1] === line) return;
+            items.push(line);
+            if (items.length > limit) items.shift();
+        },
+    };
+}
+
+const history = initHistory(env.HISTFILE, 100);
 
 const BUILTINS = {
     export(cmdArgs) {
         const expr = cmdArgs.join(' ');
         const eqIdx = expr.indexOf('=');
         if (eqIdx <= 0) {
-            tty.println('Usage: export KEY=VALUE', THEME.warn);
+            io.println('Usage: export KEY=VALUE', THEME.warn);
             return 1;
         }
         env[expr.slice(0, eqIdx).trim()] = expr.slice(eqIdx + 1).trim();
@@ -38,60 +76,61 @@ const BUILTINS = {
 
     env() {
         for (const [k, v] of Object.entries(env)) {
-            tty.println(`${k}=${v}`, THEME.text);
+            io.println(`${k}=${v}`, THEME.text);
         }
         return 0;
     },
 
     history() {
         history.items.forEach((item, i) => {
-            tty.println(`${i + 1}  ${item}`, THEME.text);
+            io.println(`${i + 1}  ${item}`, THEME.text);
         });
         return 0;
     },
 };
 
-// --- 3. TAB COMPLETION PROVIDER ---
-
 function completeShell(buffer, pos) {
-    const before = buffer.slice(0, pos);
-    const wordStart = before.search(/[^\s|;&>]*$/);
-    const word = before.slice(wordStart);
-    const prev = before.slice(0, wordStart).trimEnd();
+    try {
+        const before = buffer.slice(0, pos);
+        const wordStart = before.search(/[^\s|;&>]*$/);
+        const word = before.slice(wordStart);
+        const prev = before.slice(0, wordStart).trimEnd();
 
-    const isCommandPos = !word.includes('/') && (prev === '' || /[|;&]$/.test(prev));
+        const isCommandPos = !word.includes('/') && (prev === '' || /[|;&]$/.test(prev));
 
-    if (isCommandPos) {
-        const names = new Set(Object.keys(BUILTINS));
-        for (const dir of (env.PATH || '').split(':').filter(Boolean)) {
-            if (!OS.fs.exists(dir) || !OS.fs.isDir(dir)) continue;
-            for (const e of OS.fs.listDir(dir)) {
-                if (e.type === 'file') names.add(e.name.replace(/\.js$/, ''));
+        if (isCommandPos) {
+            const names = new Set(Object.keys(BUILTINS));
+            for (const dir of (env.PATH || '').split(':').filter(Boolean)) {
+                if (!OS.fs.exists(dir) || !OS.fs.isDir(dir)) continue;
+                for (const e of OS.fs.listDir(dir)) {
+                    if (e.type === 'file') names.add(e.name.replace(/\.js$/, ''));
+                }
             }
+            const matches = [...names].filter((n) => n.startsWith(word)).sort();
+            return { wordStart, word, matches };
         }
-        const matches = [...names].filter((n) => n.startsWith(word)).sort();
-        return { wordStart, word, matches };
+
+        const slash = word.lastIndexOf('/');
+        const dirPart = slash === -1 ? '' : word.slice(0, slash + 1);
+        const basePart = slash === -1 ? word : word.slice(slash + 1);
+        const searchDir = dirPart ? OS.resolvePath(dirPart) : OS.cwd;
+
+        if (!OS.fs.exists(searchDir) || !OS.fs.isDir(searchDir)) {
+            return { wordStart, word, matches: [] };
+        }
+
+        const entries = OS.fs.listDir(searchDir).filter((e) => e.name.startsWith(basePart));
+        const dirs = new Set(
+            entries.filter((e) => e.type === 'dir').map((e) => dirPart + e.name + '/'),
+        );
+        const matches = entries.map((e) => dirPart + e.name + (e.type === 'dir' ? '/' : ''));
+
+        return { wordStart, word, matches, isDir: (m) => dirs.has(m) };
+    } catch (err) {
+        warn(`Completion error: ${err.message}`);
+        return { wordStart: pos, word: '', matches: [] };
     }
-
-    const slash = word.lastIndexOf('/');
-    const dirPart = slash === -1 ? '' : word.slice(0, slash + 1);
-    const basePart = slash === -1 ? word : word.slice(slash + 1);
-    const searchDir = dirPart ? OS.resolvePath(dirPart) : OS.cwd;
-
-    if (!OS.fs.exists(searchDir) || !OS.fs.isDir(searchDir)) {
-        return { wordStart, word, matches: [] };
-    }
-
-    const entries = OS.fs.listDir(searchDir).filter((e) => e.name.startsWith(basePart));
-    const dirs = new Set(
-        entries.filter((e) => e.type === 'dir').map((e) => dirPart + e.name + '/'),
-    );
-    const matches = entries.map((e) => dirPart + e.name + (e.type === 'dir' ? '/' : ''));
-
-    return { wordStart, word, matches, isDir: (m) => dirs.has(m) };
 }
-
-// --- 4. TOKENIZER & COMMAND RESOLVER ---
 
 function expandVars(token) {
     return token.replace(/\$(\?|[A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => env[name] ?? '');
@@ -139,11 +178,16 @@ function tokenize(line) {
         }
     }
 
+    if (quote) {
+        warn(`Unclosed quote ${quote}; treating remainder literally`);
+    }
+
     flush();
     return tokens;
 }
 
 function resolveCommand(cmd) {
+    if (!cmd) return null;
     if (cmd.includes('/') || cmd.startsWith('.')) {
         const resolved = OS.resolvePath(cmd);
         return OS.fs.exists(resolved) && !OS.fs.isDir(resolved) ? resolved : null;
@@ -163,15 +207,13 @@ function resolveCommand(cmd) {
     return null;
 }
 
-// --- 5. EXECUTION ENGINE ---
-
 async function runCommand(cmd, cmdArgs, stdin, captureOutput) {
     const prevStdin = OS.stdin;
-    const prevCapture = tty.capture;
+    const prevCapture = io.capture;
     const buffer = captureOutput ? [] : null;
 
     OS.stdin = stdin;
-    tty.capture = buffer;
+    io.capture = buffer;
 
     let code = 0;
     try {
@@ -180,19 +222,19 @@ async function runCommand(cmd, cmdArgs, stdin, captureOutput) {
         } else {
             const target = resolveCommand(cmd);
             if (!target) {
-                tty.capture = prevCapture;
-                tty.println(`shell: ${cmd}: command not found`, THEME.error);
+                io.capture = prevCapture;
+                io.println(`shell: ${cmd}: command not found`, THEME.error);
                 return { code: 127, output: '' };
             }
-            code = (await OS.exec(target, cmdArgs, env)) ?? 0;
+            code = (await OS.exec(target, cmdArgs, env, io)) ?? 0;
         }
     } catch (err) {
-        tty.capture = prevCapture;
-        tty.println(`${cmd}: ${err.message}`, THEME.error);
+        io.capture = prevCapture;
+        reportError(cmd, err);
         return { code: 1, output: '' };
     } finally {
         OS.stdin = prevStdin;
-        tty.capture = prevCapture;
+        io.capture = prevCapture;
     }
 
     return { code, output: buffer ? buffer.join('') : '' };
@@ -234,12 +276,17 @@ async function runPipeline(tokens) {
 
         if (redirMode) {
             if (!redirFile) {
-                tty.println('shell: syntax error near redirection', THEME.error);
+                io.println('shell: syntax error near redirection', THEME.error);
                 return 1;
             }
-            const dest = OS.resolvePath(redirFile);
-            const existing = redirMode === '>>' ? OS.fs.read(dest) || '' : '';
-            OS.fs.write(dest, existing + res.output);
+            try {
+                const dest = OS.resolvePath(redirFile);
+                const existing = redirMode === '>>' ? OS.fs.read(dest) || '' : '';
+                OS.fs.write(dest, existing + res.output);
+            } catch (err) {
+                reportError(`redirection to ${redirFile}`, err);
+                return 1;
+            }
             pipedInput = null;
         } else {
             pipedInput = res.output;
@@ -282,27 +329,40 @@ async function runLine(line) {
     return lastCode;
 }
 
-// --- 6. MAIN REPL ---
-
-tty.clear(THEME.bg);
-tty.println('RING-0 // SHELL v0.6', THEME.banner);
-tty.println('type "tree" to see the file system', THEME.text);
-tty.println('', THEME.text);
+io.clear(THEME.bg);
+io.println('RING-0 // SHELL v0.6', THEME.banner);
+io.println('type "tree" to see the file system', THEME.text);
+io.println('', THEME.text);
 
 while (true) {
-    const line = (
-        await readLine({
-            prompt: `${OS.cwd}> `,
-            history: history.items,
-            complete: completeShell,
-            fg: THEME.input,
-            bg: THEME.bg,
-            promptColor: THEME.prompt,
-            dimColor: THEME.dim,
-        })
-    ).trim();
+    try {
+        const line = (
+            await readLine({
+                tty: io,
+                prompt: `${OS.cwd}> `,
+                history: history.items,
+                complete: completeShell,
+                fg: THEME.input,
+                bg: THEME.bg,
+                promptColor: THEME.prompt,
+                dimColor: THEME.dim,
+            })
+        ).trim();
 
-    if (!line) continue;
-    history.add(line);
-    await runLine(line);
+        if (!line) continue;
+
+        try {
+            history.add(line);
+        } catch (err) {
+            warn(`Could not save history entry: ${err.message}`);
+        }
+
+        await runLine(line);
+    } catch (err) {
+        reportError('shell loop recovered', err);
+        env['?'] = '1';
+        if (typeof OS.nextFrame === 'function') {
+            await OS.nextFrame();
+        }
+    }
 }

@@ -425,15 +425,78 @@ const OS = {
         return new Promise((resolve) => frameWaiters.push(resolve));
     },
 
-    async exec(path, args = [], env = {}) {
+    async exec(path, args = [], env = {}, tty = null) {
         const code = fs.read(path);
         if (code === null) {
             throw new Error(`OS.exec: File not found: ${path}`);
         }
-        const program = new AsyncFunction('OS', 'args', 'env', 'HW', `"use strict";\n${code}`);
-        return await program(OS, args, { ...env }, HW);
+        const targetTty = tty || OS.tty || null;
+        const prevTty = OS.tty;
+        if (targetTty) OS.tty = targetTty;
+        try {
+            const program = new AsyncFunction(
+                'OS',
+                'args',
+                'env',
+                'HW',
+                'tty',
+                `"use strict";\n${code}`,
+            );
+            return await program(OS, args, { ...env }, HW, targetTty);
+        } finally {
+            OS.tty = prevTty;
+        }
     },
 };
+
+function drawWrappedText(text, x, y, maxWidth, fg, bg) {
+    const charW = 8;
+    const lineH = 8;
+    const maxChars = Math.max(1, Math.floor((maxWidth - x) / charW));
+    const str = String(text);
+
+    let row = 0;
+    for (let i = 0; i < str.length; i += maxChars) {
+        const line = str.slice(i, i + maxChars);
+        if (OS.tty && typeof OS.tty.println === 'function') {
+            OS.tty.println(line, fg, bg);
+        } else if (OS.gfx && typeof OS.gfx.drawText === 'function') {
+            OS.gfx.drawText(line, x, y + row * lineH, fg, bg);
+        }
+        row++;
+    }
+}
+
+function surfaceError(tag, err) {
+    const stack = err && err.stack ? err.stack : String(err);
+    const shortMsg = `${tag}: ${err && err.message ? err.message : String(err)}`;
+
+    if (typeof OS.log === 'function') {
+        OS.log(stack);
+    }
+
+    const w = (OS.gfx && OS.gfx.width) || OS.width || 320;
+    drawWrappedText(shortMsg, 4, 4, w - 4, 9, 0);
+    if (OS.tty && typeof OS.tty.invalidate === 'function') {
+        OS.tty.invalidate();
+    }
+}
+
+async function pumpKeysToTty(tty) {
+    while (true) {
+        try {
+            let key;
+            while ((key = OS.pollKey()) !== null) {
+                if (tty && typeof tty.pushKey === 'function') {
+                    tty.pushKey(key);
+                }
+            }
+        } catch (err) {
+            surfaceError('KEY_PUMP', err);
+        }
+        await OS.nextFrame();
+    }
+}
 
 // --- 3. KERNEL BOOT SEQUENCE ---
 (async function boot() {
@@ -441,14 +504,33 @@ const OS = {
         OS.log('KERNEL: OS.fs & OS.exec online.');
         await OS.exec('/sys/gfx.js');
         await OS.exec('/sys/tty.js');
-        await OS.exec('/sys/term.js');
 
-        OS.term.start(OS.tty);
-        await OS.exec('/bin/shell.js');
-    } catch (err) {
-        OS.log('BOOT ERROR: ' + (err && err.stack ? err.stack : err));
-        if (OS.tty) {
-            OS.tty.println('BOOT ERROR: ' + (err && err.message ? err.message : err), 9);
+        if (!OS.tty && typeof OS.createTTY === 'function') {
+            const cols = Math.max(1, Math.floor((OS.width || 320) / 8));
+            const rows = Math.max(1, Math.floor((OS.height || 240) / 8));
+            OS.tty = OS.createTTY(cols, rows);
         }
+
+        await OS.exec('/sys/input.js');
+        if (OS.input && typeof OS.input.focus === 'function' && OS.tty) {
+            OS.input.focus(OS.tty);
+        }
+
+        await OS.exec('/sys/term.js');
+        if (OS.term && typeof OS.term.start === 'function') {
+            OS.term.start(OS.tty).catch((err) => surfaceError('TERM_LOOP', err));
+        }
+
+        while (true) {
+            try {
+                await OS.exec('/bin/shell.js', [], {}, OS.tty);
+                break;
+            } catch (shellErr) {
+                surfaceError('SHELL_CRASH', shellErr);
+                await OS.nextFrame();
+            }
+        }
+    } catch (err) {
+        surfaceError('BOOT_ERR', err);
     }
 })();
