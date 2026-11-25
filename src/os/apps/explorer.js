@@ -1,4 +1,4 @@
-// Folder Explorer DE Window App
+// Folder Explorer DE Window App (with File & Folder Picker Modes)
 
 const { loadFileAssociations, resolveHandlerApp } =
     typeof OS.require === 'function'
@@ -44,7 +44,48 @@ function joinChild(base, name) {
     return b === '/' ? `/${name}` : `${b}/${name}`;
 }
 
-function safeReadDir(dirPath) {
+function getExtLower(name) {
+    const idx = String(name || '').lastIndexOf('.');
+    if (idx <= 0 || idx === name.length - 1) return '';
+    return name.slice(idx + 1).toLowerCase();
+}
+
+function extractPickerConfig(win) {
+    const firstArg = win && Array.isArray(win.args) ? win.args[0] : null;
+    const raw =
+        win && win.picker && typeof win.picker === 'object'
+            ? win.picker
+            : firstArg && typeof firstArg === 'object'
+              ? firstArg
+              : null;
+
+    if (!raw || !raw.mode) {
+        return {
+            enabled: false,
+            mode: 'browse',
+            startDir: typeof firstArg === 'string' ? firstArg : OS.cwd || '/',
+            exts: null,
+            onPick: null,
+            onCancel: null,
+        };
+    }
+
+    const mode = raw.mode === 'folder' ? 'folder' : 'file';
+    const exts = Array.isArray(raw.exts)
+        ? raw.exts.map((e) => String(e).replace(/^\./, '').toLowerCase()).filter(Boolean)
+        : null;
+
+    return {
+        enabled: true,
+        mode,
+        startDir: raw.startDir || OS.cwd || '/',
+        exts,
+        onPick: typeof raw.onPick === 'function' ? raw.onPick : null,
+        onCancel: typeof raw.onCancel === 'function' ? raw.onCancel : null,
+    };
+}
+
+function safeReadDir(dirPath, picker) {
     if (!OS.fs || typeof OS.fs.listDir !== 'function') {
         return { entries: [], error: 'OS.fs.listDir unavailable' };
     }
@@ -57,10 +98,20 @@ function safeReadDir(dirPath) {
                 const full = joinChild(dirPath, String(e.name));
                 const isDir =
                     e.type === 'dir' || (typeof OS.fs.isDir === 'function' && OS.fs.isDir(full));
+                const ext = isDir ? '' : getExtLower(String(e.name));
+                const allowed =
+                    isDir ||
+                    !picker.enabled ||
+                    picker.mode !== 'file' ||
+                    !picker.exts ||
+                    picker.exts.includes(ext);
+
                 return {
                     name: String(e.name),
                     path: full,
                     isDir: Boolean(isDir),
+                    ext,
+                    allowed,
                 };
             })
             .sort((a, b) => {
@@ -78,8 +129,9 @@ function safeReadDir(dirPath) {
 
 function createApp(win, api) {
     const associations = loadFileAssociations();
+    const picker = extractPickerConfig(win);
 
-    let cwd = normalizePath((win && win.args && win.args[0]) || OS.cwd || '/');
+    let cwd = normalizePath(picker.startDir);
     let entries = [];
     let loadError = null;
     let selectedIdx = -1;
@@ -89,9 +141,62 @@ function createApp(win, api) {
     let buttons = [];
     let rowHitboxes = [];
     let statusMsg = '';
+    let settled = false;
+
+    function finishPick(chosenPath, w) {
+        if (!chosenPath || settled) return;
+        settled = true;
+        const clean = normalizePath(chosenPath);
+        try {
+            if (picker.onPick) {
+                picker.onPick(clean);
+            }
+        } finally {
+            if (w && typeof w.close === 'function') {
+                w.close();
+            }
+        }
+    }
+
+    function finishCancel(w) {
+        if (settled) return;
+        settled = true;
+        try {
+            if (picker.onCancel) {
+                picker.onCancel();
+            }
+        } finally {
+            if (w && typeof w.close === 'function') {
+                w.close();
+            }
+        }
+    }
+
+    function canPickCurrent(entry) {
+        if (!picker.enabled) return false;
+        if (picker.mode === 'folder') {
+            return true;
+        }
+        return Boolean(entry && !entry.isDir && entry.allowed);
+    }
+
+    function triggerPick(w) {
+        const selected = selectedIdx >= 0 ? entries[selectedIdx] : null;
+        if (picker.mode === 'folder') {
+            const targetFolder = selected && selected.isDir ? selected.path : cwd;
+            finishPick(targetFolder, w);
+            return;
+        }
+        if (selected && !selected.isDir && selected.allowed) {
+            finishPick(selected.path, w);
+        } else {
+            statusMsg = 'Select a valid file first';
+            if (w && typeof w.invalidate === 'function') w.invalidate();
+        }
+    }
 
     function refresh(w) {
-        const res = safeReadDir(cwd);
+        const res = safeReadDir(cwd, picker);
         entries = res.entries;
         loadError = res.error;
         if (selectedIdx >= entries.length) selectedIdx = entries.length - 1;
@@ -107,6 +212,16 @@ function createApp(win, api) {
             scrollOffset = 0;
             statusMsg = '';
             refresh(w);
+            return;
+        }
+
+        if (picker.enabled) {
+            if (picker.mode === 'file' && entry.allowed) {
+                finishPick(entry.path, w);
+            } else if (picker.mode === 'file' && !entry.allowed) {
+                statusMsg = `Only ${picker.exts.join(', ')} allowed`;
+                if (w && typeof w.invalidate === 'function') w.invalidate();
+            }
             return;
         }
 
@@ -145,12 +260,20 @@ function createApp(win, api) {
     }
 
     function getButtons(w) {
-        const defs = [
-            { id: 'up', label: 'UP', bg: 1 },
-            { id: 'home', label: 'ROOT', bg: 1 },
-            { id: 'open', label: 'OPEN', bg: selectedIdx >= 0 ? 2 : 8 },
-            { id: 'dn', label: 'v', bg: 1 },
-        ];
+        const selected = selectedIdx >= 0 ? entries[selectedIdx] : null;
+        const defs = picker.enabled
+            ? [
+                  { id: 'up', label: 'UP', bg: 1 },
+                  { id: 'pick', label: 'PICK', bg: canPickCurrent(selected) ? 2 : 8 },
+                  { id: 'cancel', label: 'X', bg: 9 },
+              ]
+            : [
+                  { id: 'up', label: 'UP', bg: 1 },
+                  { id: 'home', label: 'ROOT', bg: 1 },
+                  { id: 'open', label: 'OPEN', bg: selectedIdx >= 0 ? 2 : 8 },
+                  { id: 'dn', label: 'v', bg: 1 },
+              ];
+
         const list = [];
         let x = 3;
         const y = 2;
@@ -195,6 +318,10 @@ function createApp(win, api) {
                         if (selectedIdx >= 0 && entries[selectedIdx]) {
                             openEntry(entries[selectedIdx], w);
                         }
+                    } else if (b.id === 'pick') {
+                        triggerPick(w);
+                    } else if (b.id === 'cancel') {
+                        finishCancel(w);
                     } else if (b.id === 'dn') {
                         const visibleRows = Math.max(
                             1,
@@ -259,7 +386,7 @@ function createApp(win, api) {
                 const maxPathChars = Math.floor(pathAvail / 8);
                 const shownPath =
                     cwd.length > maxPathChars ? '..' + cwd.slice(-(maxPathChars - 2)) : cwd;
-                gfx.drawText(shownPath, btnEndX, 3, 14, -1);
+                gfx.drawText(shownPath, btnEndX, 3, picker.enabled ? 11 : 14, -1);
             }
 
             // Entry list
@@ -290,8 +417,8 @@ function createApp(win, api) {
                     }
 
                     const tag = item.isDir ? '[D]' : '   ';
-                    const tagFg = item.isDir ? 11 : 8;
-                    const nameFg = selected ? 15 : item.isDir ? 14 : 7;
+                    const tagFg = item.isDir ? 11 : item.allowed ? 8 : 9;
+                    const nameFg = selected ? 15 : !item.allowed ? 8 : item.isDir ? 14 : 7;
                     const suffix = item.isDir ? '/' : '';
                     const label = (item.name + suffix).slice(0, maxNameChars);
 
@@ -314,16 +441,28 @@ function createApp(win, api) {
             gfx.line(0, statusY, viewW - 1, statusY, 8);
 
             const selectedItem = selectedIdx >= 0 ? entries[selectedIdx] : null;
-            const infoText =
-                statusMsg ||
-                (selectedItem
-                    ? `${selectedItem.isDir ? 'DIR' : 'FILE'}: ${selectedItem.name}`
-                    : `${entries.length} item${entries.length === 1 ? '' : 's'}`);
+            const defaultStatus = picker.enabled
+                ? picker.mode === 'folder'
+                    ? `Pick folder: ${selectedItem && selectedItem.isDir ? selectedItem.name : cwd}`
+                    : selectedItem
+                      ? `Pick file: ${selectedItem.name}`
+                      : 'Select a file & click PICK'
+                : selectedItem
+                  ? `${selectedItem.isDir ? 'DIR' : 'FILE'}: ${selectedItem.name}`
+                  : `${entries.length} item${entries.length === 1 ? '' : 's'}`;
+
+            const infoText = statusMsg || defaultStatus;
             const maxStatusChars = Math.max(1, Math.floor((viewW - 6) / 8));
             gfx.drawText(infoText.slice(0, maxStatusChars), 3, statusY + 2, 15, -1);
         },
 
         destroy() {
+            if (picker.enabled && !settled && picker.onCancel) {
+                settled = true;
+                try {
+                    picker.onCancel();
+                } catch (_) {}
+            }
             buttons = [];
             rowHitboxes = [];
         },
