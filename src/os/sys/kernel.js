@@ -381,6 +381,7 @@ const OS = {
     height: HW.height,
     vram: HW.vram,
     log: HW.log,
+    mouse: HW.mouse ?? { x: 0, y: 0, button: 0, buttons: 0 },
     cwd: '/',
     stdin: null,
     modules: {},
@@ -414,6 +415,10 @@ const OS = {
 
     pollKey() {
         return HW.pollKey();
+    },
+
+    pollMouse() {
+        return typeof HW.pollMouse === 'function' ? HW.pollMouse() : null;
     },
 
     nextFrame() {

@@ -5,9 +5,24 @@ import {
     VRAM_SIZE,
 } from "../hw/config.ts";
 
+export interface MouseEventItem {
+    action: "down" | "move" | "up";
+    x: number;
+    y: number;
+    button: number;
+    buttons: number;
+}
+
 let disk: Uint8Array | null = null;
 const vram = new Uint8Array(VRAM_SIZE);
 const keyQueue: string[] = [];
+const mouseQueue: MouseEventItem[] = [];
+const mouseState = {
+    x: 0,
+    y: 0,
+    button: 0,
+    buttons: 0,
+};
 let clockId: number | null = null;
 
 const decoder = new TextDecoder();
@@ -18,6 +33,7 @@ const HW = {
     height: SCREEN_HEIGHT,
     sectorSize: SECTOR_SIZE,
     vram,
+    mouse: mouseState,
 
     readSectors(startSector: number, count = 1): Uint8Array {
         if (!disk) return new Uint8Array(count * SECTOR_SIZE);
@@ -32,6 +48,10 @@ const HW = {
 
     pollKey(): string | null {
         return keyQueue.shift() ?? null;
+    },
+
+    pollMouse(): MouseEventItem | null {
+        return mouseQueue.shift() ?? null;
     },
 
     // The OS Kernel hooks into this 60Hz hardware interrupt
@@ -92,7 +112,7 @@ function bootFromSectorZero() {
     }
 }
 
-// Listen for power-on and keyboard events from the main thread
+// Listen for power-on, keyboard, and mouse events from the main thread
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data;
 
@@ -100,14 +120,31 @@ self.onmessage = (e: MessageEvent) => {
         disk = msg.disk;
         vram.fill(0);
         keyQueue.length = 0;
+        mouseQueue.length = 0;
+        mouseState.x = 0;
+        mouseState.y = 0;
+        mouseState.button = 0;
+        mouseState.buttons = 0;
 
         bootFromSectorZero();
         startClock();
     } else if (msg.type === "KEY") {
         keyQueue.push(msg.key);
-    } else if (e.data.type === "GET_DISK") {
-        self.postMessage({ type: "DISK_SNAPSHOT", disk: disk }); // use your worker's disk variable name
-    } else if (e.data.type === "REQUEST_REBOOT") {
+    } else if (msg.type === "MOUSE") {
+        mouseState.x = msg.x;
+        mouseState.y = msg.y;
+        mouseState.button = msg.button;
+        mouseState.buttons = msg.buttons;
+        mouseQueue.push({
+            action: msg.action,
+            x: msg.x,
+            y: msg.y,
+            button: msg.button,
+            buttons: msg.buttons,
+        });
+    } else if (msg.type === "GET_DISK") {
+        self.postMessage({ type: "DISK_SNAPSHOT", disk: disk });
+    } else if (msg.type === "REQUEST_REBOOT") {
         self.postMessage({ type: "REBOOT", disk: disk });
     }
 };

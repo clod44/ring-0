@@ -1,13 +1,24 @@
+export type MouseAction = "down" | "move" | "up";
+
+export interface MouseEventPayload {
+    action: MouseAction;
+    x: number;
+    y: number;
+    button: number;
+    buttons: number;
+}
+
 export interface InputBridgeOptions {
     screenEl: HTMLCanvasElement;
     kbdProxy: HTMLInputElement | null;
     ctrlBtn: HTMLButtonElement | null;
     mobileKeysEl: HTMLElement | null;
     onKey: (key: string, opts?: { ctrl?: boolean }) => void;
+    onMouse?: (ev: MouseEventPayload) => void;
 }
 
 export function initInputBridge(opts: InputBridgeOptions) {
-    const { screenEl, kbdProxy, ctrlBtn, mobileKeysEl, onKey } = opts;
+    const { screenEl, kbdProxy, ctrlBtn, mobileKeysEl, onKey, onMouse } = opts;
     let stickyCtrl = false;
 
     function setStickyCtrl(active: boolean) {
@@ -26,10 +37,74 @@ export function initInputBridge(opts: InputBridgeOptions) {
         }
     }
 
+    function toScreenCoords(e: PointerEvent): { x: number; y: number } {
+        const rect = screenEl.getBoundingClientRect();
+        const w = screenEl.width || rect.width || 1;
+        const h = screenEl.height || rect.height || 1;
+
+        const scaleX = rect.width > 0 ? w / rect.width : 1;
+        const scaleY = rect.height > 0 ? h / rect.height : 1;
+
+        const rawX = (e.clientX - rect.left) * scaleX;
+        const rawY = (e.clientY - rect.top) * scaleY;
+
+        return {
+            x: Math.max(0, Math.min(w - 1, Math.floor(rawX))),
+            y: Math.max(0, Math.min(h - 1, Math.floor(rawY))),
+        };
+    }
+
     // Use 'click' (a complete tap gesture) rather than 'pointerdown' so mobile keyboards stay open
     screenEl.addEventListener("click", () => {
         focusInput();
     });
+
+    screenEl.addEventListener("pointerdown", (e: PointerEvent) => {
+        if (!onMouse) return;
+        try {
+            screenEl.setPointerCapture(e.pointerId);
+        } catch {
+            // Ignore if pointer capture isn't supported for this event source
+        }
+        const { x, y } = toScreenCoords(e);
+        onMouse({
+            action: "down",
+            x,
+            y,
+            button: e.button,
+            buttons: e.buttons,
+        });
+    });
+
+    screenEl.addEventListener("pointermove", (e: PointerEvent) => {
+        if (!onMouse) return;
+        const { x, y } = toScreenCoords(e);
+        onMouse({
+            action: "move",
+            x,
+            y,
+            button: e.button,
+            buttons: e.buttons,
+        });
+    });
+
+    const handlePointerUp = (e: PointerEvent) => {
+        if (screenEl.hasPointerCapture?.(e.pointerId)) {
+            screenEl.releasePointerCapture(e.pointerId);
+        }
+        if (!onMouse) return;
+        const { x, y } = toScreenCoords(e);
+        onMouse({
+            action: "up",
+            x,
+            y,
+            button: e.button,
+            buttons: e.buttons,
+        });
+    };
+
+    screenEl.addEventListener("pointerup", handlePointerUp);
+    screenEl.addEventListener("pointercancel", handlePointerUp);
 
     ctrlBtn?.addEventListener("click", (e) => {
         e.preventDefault();

@@ -60,6 +60,17 @@ const input = initInputBridge({
       opts?.ctrl ? { type: "KEY", key, ctrl: true } : { type: "KEY", key },
     );
   },
+  onMouse: (ev) => {
+    if (!worker) return;
+    worker.postMessage({
+      type: "MOUSE",
+      action: ev.action,
+      x: ev.x,
+      y: ev.y,
+      button: ev.button,
+      buttons: ev.buttons,
+    });
+  },
 });
 
 function bootMachine(existingDisk?: Uint8Array) {
