@@ -482,22 +482,6 @@ function surfaceError(tag, err) {
     }
 }
 
-async function pumpKeysToTty(tty) {
-    while (true) {
-        try {
-            let key;
-            while ((key = OS.pollKey()) !== null) {
-                if (tty && typeof tty.pushKey === 'function') {
-                    tty.pushKey(key);
-                }
-            }
-        } catch (err) {
-            surfaceError('KEY_PUMP', err);
-        }
-        await OS.nextFrame();
-    }
-}
-
 // --- 3. KERNEL BOOT SEQUENCE ---
 (async function boot() {
     try {
