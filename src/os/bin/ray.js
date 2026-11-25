@@ -1,5 +1,6 @@
-const W = OS.width || 320;
-const H = OS.height || 240;
+const io = (typeof tty !== 'undefined' && tty) || OS.tty;
+const W = (OS.gfx && OS.gfx.width) || OS.width || 320;
+const H = (OS.gfx && OS.gfx.height) || OS.height || 240;
 const vram = OS.vram;
 const aspect = W / H;
 
@@ -8,6 +9,12 @@ const BAYER = [
     -0.5, 0.0, -0.375, 0.125, 0.25, -0.25, 0.375, -0.125, -0.3125, 0.1875, -0.4375, 0.0625, 0.4375,
     -0.0625, 0.3125, -0.1875,
 ];
+
+function formatErr(err) {
+    if (!err) return 'Unknown error';
+    if (typeof err === 'string') return err;
+    return err.message || String(err);
+}
 
 // Fast RGB (0..1) -> xterm-256 6x6x6 cube index with subtle dithering
 function rgbToXterm(r, g, b, x, y) {
@@ -96,7 +103,7 @@ function trace(ox, oy, oz, dx, dy, dz, spheres, light, depth) {
     let lx = light.x - hx;
     let ly = light.y - hy;
     let lz = light.z - hz;
-    const lDist = Math.sqrt(lx * lx + ly * ly + lz * lz);
+    const lDist = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
     lx /= lDist;
     ly /= lDist;
     lz /= lDist;
@@ -179,92 +186,142 @@ function trace(ox, oy, oz, dx, dy, dz, spheres, light, depth) {
 let step = 2;
 let t = 0;
 let paused = false;
+let running = true;
 
-OS.gfx.clear(0);
+const keyQueue = [];
+const hasInputService = Boolean(OS.input && typeof OS.input.pushHandler === 'function');
+const releaseInput = hasInputService ? OS.input.pushHandler((k) => keyQueue.push(k)) : null;
 
-while (true) {
-    let key;
-    while ((key = OS.pollKey()) !== null) {
-        if (key === 'Escape' || key === 'q') {
-            OS.tty.clear(0);
-            return 0;
-        }
-        if (key === ' ') {
-            step = step === 1 ? 4 : step === 4 ? 2 : 1;
-        }
-        if (key === 'p') {
-            paused = !paused;
-        }
+function drainKeys() {
+    if (hasInputService) {
+        return keyQueue.length > 0 ? keyQueue.shift() : null;
     }
+    return typeof OS.pollKey === 'function' ? OS.pollKey() : null;
+}
 
-    if (!paused) t += 0.08;
+if (OS.gfx && typeof OS.gfx.clear === 'function') {
+    OS.gfx.clear(0);
+}
 
-    const spheres = [
-        // Bouncing reflective gold/amber sphere
-        {
-            x: Math.sin(t * 0.7) * 0.45,
-            y: 0.75 + Math.abs(Math.sin(t * 1.8)) * 0.5,
-            z: 0.2,
-            r: 0.7,
-            rgb: [1.0, 0.7, 0.15],
-            reflect: 0.45,
-        },
-        // Orbiting crimson sphere
-        {
-            x: Math.cos(t * 1.1) * 1.5,
-            y: 0.42,
-            z: 0.5 + Math.sin(t * 1.1) * 1.1,
-            r: 0.4,
-            rgb: [0.95, 0.18, 0.25],
-            reflect: 0.25,
-        },
-        // Orbiting cyan sphere
-        {
-            x: Math.cos(t * 1.1 + Math.PI) * 1.35,
-            y: 0.35,
-            z: 0.5 + Math.sin(t * 1.1 + Math.PI) * 1.0,
-            r: 0.32,
-            rgb: [0.15, 0.85, 0.95],
-            reflect: 0.35,
-        },
-    ];
+try {
+    while (running) {
+        try {
+            let key;
+            while ((key = drainKeys()) !== null) {
+                const k = key && typeof key === 'object' ? String(key.key ?? '') : String(key);
+                if (k === 'Escape' || k === 'q' || k === 'Q') {
+                    running = false;
+                    break;
+                }
+                if (k === ' ' || k === 'Spacebar') {
+                    step = step === 1 ? 4 : step === 4 ? 2 : 1;
+                }
+                if (k === 'p' || k === 'P') {
+                    paused = !paused;
+                }
+            }
 
-    const light = {
-        x: Math.cos(t * 0.5) * 3.5,
-        y: 4.0,
-        z: Math.sin(t * 0.5) * 3.5 - 1.0,
-    };
+            if (!running) break;
 
-    for (let py = 0; py < H; py += step) {
-        const v = 1 - ((py + 0.5) / H) * 2;
-        for (let px = 0; px < W; px += step) {
-            const u = (((px + 0.5) / W) * 2 - 1) * aspect;
+            if (!paused) t += 0.08;
 
-            let dx = u;
-            let dy = v - 0.12;
-            let dz = 1.6;
-            const invLen = 1 / Math.sqrt(dx * dx + dy * dy + dz * dz);
-            dx *= invLen;
-            dy *= invLen;
-            dz *= invLen;
+            const spheres = [
+                // Bouncing reflective gold/amber sphere
+                {
+                    x: Math.sin(t * 0.7) * 0.45,
+                    y: 0.75 + Math.abs(Math.sin(t * 1.8)) * 0.5,
+                    z: 0.2,
+                    r: 0.7,
+                    rgb: [1.0, 0.7, 0.15],
+                    reflect: 0.45,
+                },
+                // Orbiting crimson sphere
+                {
+                    x: Math.cos(t * 1.1) * 1.5,
+                    y: 0.42,
+                    z: 0.5 + Math.sin(t * 1.1) * 1.1,
+                    r: 0.4,
+                    rgb: [0.95, 0.18, 0.25],
+                    reflect: 0.25,
+                },
+                // Orbiting cyan sphere
+                {
+                    x: Math.cos(t * 1.1 + Math.PI) * 1.35,
+                    y: 0.35,
+                    z: 0.5 + Math.sin(t * 1.1 + Math.PI) * 1.0,
+                    r: 0.32,
+                    rgb: [0.15, 0.85, 0.95],
+                    reflect: 0.35,
+                },
+            ];
 
-            const [r, g, b] = trace(0, 1.2, -3.2, dx, dy, dz, spheres, light, 1);
-            const col = rgbToXterm(r, g, b, px / step, py / step);
+            const light = {
+                x: Math.cos(t * 0.5) * 3.5,
+                y: 4.0,
+                z: Math.sin(t * 0.5) * 3.5 - 1.0,
+            };
 
-            if (step === 1) {
-                vram[py * W + px] = col;
-            } else {
-                for (let oy = 0; oy < step && py + oy < H; oy++) {
-                    const row = (py + oy) * W + px;
-                    for (let ox = 0; ox < step && px + ox < W; ox++) {
-                        vram[row + ox] = col;
+            if (vram && vram.length >= W * H) {
+                for (let py = 0; py < H; py += step) {
+                    const v = 1 - ((py + 0.5) / H) * 2;
+                    for (let px = 0; px < W; px += step) {
+                        const u = (((px + 0.5) / W) * 2 - 1) * aspect;
+
+                        let dx = u;
+                        let dy = v - 0.12;
+                        let dz = 1.6;
+                        const invLen = 1 / Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+                        dx *= invLen;
+                        dy *= invLen;
+                        dz *= invLen;
+
+                        const [r, g, b] = trace(0, 1.2, -3.2, dx, dy, dz, spheres, light, 1);
+                        const col = rgbToXterm(r, g, b, px / step, py / step);
+
+                        if (step === 1) {
+                            vram[py * W + px] = col;
+                        } else {
+                            for (let oy = 0; oy < step && py + oy < H; oy++) {
+                                const row = (py + oy) * W + px;
+                                for (let ox = 0; ox < step && px + ox < W; ox++) {
+                                    vram[row + ox] = col;
+                                }
+                            }
+                        }
                     }
                 }
             }
+
+            if (OS.gfx && typeof OS.gfx.drawText === 'function') {
+                OS.gfx.drawText(
+                    `RAYTRACER [${step}x${step}]  SPACE:RES  P:PAUSE  Q:EXIT`,
+                    4,
+                    4,
+                    15,
+                    0,
+                );
+            }
+        } catch (err) {
+            if (typeof OS.log === 'function') {
+                OS.log(`RAYTRACER ERR: ${formatErr(err)}`);
+            }
+            if (OS.gfx && typeof OS.gfx.drawText === 'function') {
+                OS.gfx.drawText(`ERR: ${formatErr(err).slice(0, 32)}`, 4, 16, 9, 0);
+            }
         }
+
+        await OS.nextFrame();
     }
-
-    OS.gfx.drawText(`RAYTRACER [${step}x${step}]  SPACE:RES  P:PAUSE  Q:EXIT`, 4, 4, 15, 0);
-
-    await OS.nextFrame();
+} finally {
+    if (typeof releaseInput === 'function') {
+        releaseInput();
+    }
+    if (io && typeof io.clear === 'function') {
+        io.clear(0);
+    }
+    if (OS.input && typeof OS.input.focus === 'function' && io) {
+        OS.input.focus(io);
+    }
 }
+
+return 0;
