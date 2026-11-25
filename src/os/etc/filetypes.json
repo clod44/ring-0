@@ -1,0 +1,9 @@
+{
+    "associations": {
+        "png": "/apps/imgview.js",
+        "jpg": "/apps/imgview.js",
+        "jpeg": "/apps/imgview.js",
+        "webp": "/apps/imgview.js",
+        "gif": "/apps/imgview.js"
+    }
+}

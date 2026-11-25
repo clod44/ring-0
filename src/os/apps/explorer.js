@@ -1,5 +1,18 @@
 // Folder Explorer DE Window App
 
+const { loadFileAssociations, resolveHandlerApp } =
+    typeof OS.require === 'function'
+        ? OS.require('/lib/filetype.js')
+        : {
+              loadFileAssociations: () => ({}),
+              resolveHandlerApp: (p) =>
+                  String(p || '')
+                      .toLowerCase()
+                      .endsWith('.js')
+                      ? { appPath: p, args: [], directExec: true }
+                      : null,
+          };
+
 const TOOLBAR_H = 14;
 const STATUS_H = 12;
 const ROW_H = 10;
@@ -64,6 +77,8 @@ function safeReadDir(dirPath) {
 }
 
 function createApp(win, api) {
+    const associations = loadFileAssociations();
+
     let cwd = normalizePath((win && win.args && win.args[0]) || OS.cwd || '/');
     let entries = [];
     let loadError = null;
@@ -95,14 +110,20 @@ function createApp(win, api) {
             return;
         }
 
-        if (entry.name.endsWith('.js') && api && typeof api.spawnWindow === 'function') {
+        const route = resolveHandlerApp(entry.path, associations);
+        if (route && api && typeof api.spawnWindow === 'function') {
+            const winTitle = route.directExec
+                ? entry.name.replace(/\.js$/, '').toUpperCase()
+                : `VIEW: ${entry.name.toUpperCase()}`;
+
             api.spawnWindow({
-                title: entry.name.replace(/\.js$/, '').toUpperCase(),
+                title: winTitle,
                 x: (w.x || 24) + 18,
                 y: (w.y || 36) + 18,
-                w: Math.min(220, Math.max(150, w.w)),
-                h: Math.min(150, Math.max(95, w.h)),
-                appPath: entry.path,
+                w: Math.min(240, Math.max(160, w.w)),
+                h: Math.min(170, Math.max(110, w.h)),
+                appPath: route.appPath,
+                args: route.args,
             });
             statusMsg = `Opened ${entry.name}`;
             w.invalidate();
