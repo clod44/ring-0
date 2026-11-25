@@ -107,7 +107,8 @@ for (const [ch, hex] of Object.entries(RAW_FONT)) {
     FONT[ch] = rows;
 }
 
-const CONF_PATH = '/etc/gfx.conf';
+const CONF_PATH = '/etc/gfx.json';
+const LEGACY_CONF_PATH = '/etc/gfx.conf';
 const PHYS_W = OS.width;
 const PHYS_H = OS.height;
 const vram = OS.vram;
@@ -151,7 +152,13 @@ function applyScale(nextScale) {
     OS.height = H;
 }
 
-function parseConf(text) {
+function parseJsonConfig(text) {
+    if (!text) return {};
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+}
+
+function parseLegacyConf(text) {
     const cfg = {};
     if (!text) return cfg;
 
@@ -170,12 +177,21 @@ function parseConf(text) {
 
 function loadConfig(path = CONF_PATH) {
     try {
-        if (!OS.fs || !OS.fs.exists(path)) {
+        if (!OS.fs) {
             applyScale(1);
             return;
         }
-        const conf = parseConf(OS.fs.read(path));
-        applyScale(conf.scale ? Number(conf.scale) : 1);
+        if (OS.fs.exists(path)) {
+            const cfg = parseJsonConfig(OS.fs.read(path));
+            applyScale(cfg.scale !== undefined ? Number(cfg.scale) : 1);
+            return;
+        }
+        if (path === CONF_PATH && OS.fs.exists(LEGACY_CONF_PATH)) {
+            const cfg = parseLegacyConf(OS.fs.read(LEGACY_CONF_PATH));
+            applyScale(cfg.scale ? Number(cfg.scale) : 1);
+            return;
+        }
+        applyScale(1);
     } catch {
         applyScale(1);
     }
@@ -187,7 +203,8 @@ function saveConfig(path = CONF_PATH) {
     if (dir && !OS.fs.exists(dir) && OS.fs.mkdir) {
         OS.fs.mkdir(dir);
     }
-    OS.fs.write(path, `# RING-0 graphics config\nscale=${scale}\n`);
+    const payload = JSON.stringify({ scale }, null, 2) + '\n';
+    OS.fs.write(path, payload);
     return true;
 }
 
