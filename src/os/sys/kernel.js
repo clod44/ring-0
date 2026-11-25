@@ -507,7 +507,7 @@ function surfaceError(tag, err) {
 
         while (true) {
             try {
-                await OS.exec('/bin/shell.js', [], {}, OS.tty);
+                await OS.exec('/bin/de.js', [], {});
                 break;
             } catch (shellErr) {
                 surfaceError('SHELL_CRASH', shellErr);
