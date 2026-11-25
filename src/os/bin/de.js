@@ -658,17 +658,30 @@ function launchDesktopApp(icon) {
     });
 }
 
+function formatLabel(name, maxChars) {
+    const s = String(name || '');
+    if (s.length <= maxChars) return s;
+    return maxChars > 1 ? s.slice(0, maxChars - 1) + '~' : s.slice(0, maxChars);
+}
+
 function drawDesktopIcons() {
     const { boxW, boxH, maxLabelChars, boxBg, boxBorder, glyphFg, labelFg } = CFG.icon;
     for (const icon of desktopApps) {
-        const boxX = icon.x + 8;
+        const label = formatLabel(icon.name, maxLabelChars);
+        const labelW = label.length * 8;
+        const slotW = Math.max(boxW, labelW);
+        const boxX = icon.x + Math.floor((slotW - boxW) / 2);
+        const labelX = icon.x + Math.floor((slotW - labelW) / 2);
+
         gfx.rect(boxX, icon.y, boxW, boxH, boxBorder, false);
         gfx.rect(boxX + 1, icon.y + 1, boxW - 2, boxH - 2, boxBg, true);
-        const glyph = icon.name.charAt(0).toUpperCase() || '?';
-        gfx.drawChar(glyph, boxX + 8, icon.y + 6, glyphFg, -1);
 
-        const label = icon.name.slice(0, maxLabelChars);
-        gfx.drawText(label, icon.x, icon.y + boxH + 2, labelFg, -1);
+        const glyph = icon.name.charAt(0).toUpperCase() || '?';
+        const glyphX = boxX + Math.floor((boxW - 8) / 2);
+        const glyphY = icon.y + Math.floor((boxH - 8) / 2);
+        gfx.drawChar(glyph, glyphX, glyphY, glyphFg, -1);
+
+        gfx.drawText(label, labelX, icon.y + boxH + 2, labelFg, -1);
     }
 }
 
