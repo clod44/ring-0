@@ -4,6 +4,11 @@
         "jpg": "/apps/imgview.js",
         "jpeg": "/apps/imgview.js",
         "webp": "/apps/imgview.js",
-        "gif": "/apps/imgview.js"
+        "gif": "/apps/imgview.js",
+        "bmp": "/apps/imgview.js",
+        "txt": "/apps/editor.js",
+        "json": "/apps/editor.js",
+        "md": "/apps/editor.js",
+        "log": "/apps/editor.js"
     }
 }

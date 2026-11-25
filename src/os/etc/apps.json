@@ -22,5 +22,13 @@
         "mode": "window",
         "w": 200,
         "h": 120
+    },
+    {
+        "id": "editor",
+        "name": "Text Editor",
+        "exec": "/apps/editor.js",
+        "mode": "window",
+        "w": 200,
+        "h": 120
     }
 ]
