@@ -2,17 +2,17 @@ const DEFAULT_FG = 15;
 const DEFAULT_BG = 0;
 const CELL_W = 8;
 const CELL_H = 8;
+const TAB_STOP = 8;
 
 function createTTY(cols, rows, opts = {}) {
-    const c = Math.max(1, cols | 0);
-    const r = Math.max(1, rows | 0);
-    const cells = c * r;
+    let c = Math.max(1, cols | 0);
+    let r = Math.max(1, rows | 0);
     const defaultFg = opts.defaultFg ?? DEFAULT_FG;
     const defaultBg = opts.defaultBg ?? DEFAULT_BG;
 
-    const chars = new Uint8Array(cells).fill(32);
-    const fgs = new Uint8Array(cells).fill(defaultFg);
-    const bgs = new Uint8Array(cells).fill(defaultBg);
+    let chars = new Uint8Array(c * r).fill(32);
+    let fgs = new Uint8Array(c * r).fill(defaultFg);
+    let bgs = new Uint8Array(c * r).fill(defaultBg);
 
     let cursorX = 0;
     let cursorY = 0;
@@ -59,12 +59,22 @@ function createTTY(cols, rows, opts = {}) {
         }
     }
 
-    return {
-        cols: c,
-        rows: r,
-        chars,
-        fgs,
-        bgs,
+    const api = {
+        get cols() {
+            return c;
+        },
+        get rows() {
+            return r;
+        },
+        get chars() {
+            return chars;
+        },
+        get fgs() {
+            return fgs;
+        },
+        get bgs() {
+            return bgs;
+        },
         capture: null,
 
         get dirty() {
@@ -79,8 +89,41 @@ function createTTY(cols, rows, opts = {}) {
             dirty = true;
         },
 
+        resize(nextCols, nextRows) {
+            const nc = Math.max(1, nextCols | 0);
+            const nr = Math.max(1, nextRows | 0);
+            if (nc === c && nr === r) return;
+
+            const nextChars = new Uint8Array(nc * nr).fill(32);
+            const nextFgs = new Uint8Array(nc * nr).fill(defaultFg);
+            const nextBgs = new Uint8Array(nc * nr).fill(defaultBg);
+
+            const copyCols = Math.min(c, nc);
+            const copyRows = Math.min(r, nr);
+
+            for (let row = 0; row < copyRows; row++) {
+                for (let col = 0; col < copyCols; col++) {
+                    const sIdx = row * c + col;
+                    const dIdx = row * nc + col;
+                    nextChars[dIdx] = chars[sIdx];
+                    nextFgs[dIdx] = fgs[sIdx];
+                    nextBgs[dIdx] = bgs[sIdx];
+                }
+            }
+
+            c = nc;
+            r = nr;
+            chars = nextChars;
+            fgs = nextFgs;
+            bgs = nextBgs;
+
+            cursorX = Math.max(0, Math.min(c - 1, cursorX));
+            cursorY = Math.max(0, Math.min(r - 1, cursorY));
+            dirty = true;
+        },
+
         pushKey(key) {
-            if (key !== null && key !== undefined) {
+            if (typeof key === 'string' && key.length > 0) {
                 keyQueue.push(key);
             }
         },
@@ -141,7 +184,14 @@ function createTTY(cols, rows, opts = {}) {
             }
 
             if (ch === '\t') {
-                this.print('  ', fg, bg);
+                const nextTab = Math.min(c, (Math.floor(cursorX / TAB_STOP) + 1) * TAB_STOP);
+                while (cursorX < nextTab) {
+                    writeCell(cursorX, cursorY, ' ', fg, bg);
+                    cursorX++;
+                }
+                if (cursorX >= c) {
+                    newline(bg);
+                }
                 return;
             }
 
@@ -177,45 +227,9 @@ function createTTY(cols, rows, opts = {}) {
             }
             writeCell(cursorX, cursorY, ' ', fg, bg);
         },
-
-        async readLine(fg = defaultFg, bg = defaultBg) {
-            let buffer = '';
-            let frame = 0;
-
-            this.drawCursor(true);
-
-            while (true) {
-                let key;
-                while ((key = this.pollKey()) !== null) {
-                    if (key === 'Enter') {
-                        this.drawCursor(false);
-                        this.putChar('\n', fg, bg);
-                        return buffer;
-                    }
-
-                    if (key === 'Backspace') {
-                        if (buffer.length > 0) {
-                            buffer = buffer.slice(0, -1);
-                            this.backspace(fg, bg);
-                        }
-                    } else if (key.length === 1) {
-                        buffer += key;
-                        this.putChar(key, fg, bg);
-                    }
-
-                    frame = 0;
-                    this.drawCursor(true);
-                }
-
-                frame++;
-                if (frame % 30 === 0) {
-                    this.drawCursor(!cursorVisible);
-                }
-
-                await OS.nextFrame();
-            }
-        },
     };
+
+    return api;
 }
 
 const defaultCols = Math.max(1, Math.floor((OS.width || 320) / CELL_W));

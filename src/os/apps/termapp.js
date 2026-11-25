@@ -11,94 +11,27 @@ function createApp(win) {
     const initCols = Math.max(10, Math.floor(win.w / cellW));
     const initRows = Math.max(3, Math.floor(win.h / cellH));
 
-    let tty = typeof OS.createTTY === 'function' ? OS.createTTY(initCols, initRows) : null;
-
-    function wrapTty(rawTty) {
-        if (!rawTty) return null;
-        const notify = () => {
-            win.invalidate();
-        };
-        return new Proxy(rawTty, {
-            get(target, prop, receiver) {
-                if (
-                    prop === 'cols' ||
-                    prop === 'rows' ||
-                    prop === 'chars' ||
-                    prop === 'fgs' ||
-                    prop === 'bgs'
-                ) {
-                    return target[prop];
-                }
-                const val = Reflect.get(target, prop, target);
-                if (typeof val === 'function') {
-                    return function (...args) {
-                        const res = val.apply(target, args);
-                        if (
-                            prop === 'print' ||
-                            prop === 'println' ||
-                            prop === 'putChar' ||
-                            prop === 'backspace' ||
-                            prop === 'clear' ||
-                            prop === 'clearToEnd' ||
-                            prop === 'setCursor' ||
-                            prop === 'drawCursor' ||
-                            prop === 'invalidate'
-                        ) {
-                            notify();
-                        }
-                        return res;
-                    };
-                }
-                return val;
-            },
-        });
-    }
-
-    if (tty) {
-        tty = wrapTty(tty);
-    }
+    const tty = typeof OS.createTTY === 'function' ? OS.createTTY(initCols, initRows) : null;
+    let shellStarted = false;
 
     function syncTtySize(w) {
-        const nextCols = Math.max(10, Math.floor(w.w / cellW));
-        const nextRows = Math.max(3, Math.floor(w.h / cellH));
         if (!tty) return;
+        const target = w || win;
+        const nextCols = Math.max(10, Math.floor(target.w / cellW));
+        const nextRows = Math.max(3, Math.floor(target.h / cellH));
 
         if (nextCols !== tty.cols || nextRows !== tty.rows) {
-            const prev = tty;
-            const prevCur =
-                typeof prev.getCursor === 'function' ? prev.getCursor() : { x: 0, y: 0 };
-            const fresh = OS.createTTY(nextCols, nextRows);
-
-            if (prev && prev.chars) {
-                const copyRows = Math.min(prev.rows, fresh.rows);
-                const copyCols = Math.min(prev.cols, fresh.cols);
-                const rowOffset = Math.max(0, prev.rows - copyRows);
-                for (let y = 0; y < copyRows; y++) {
-                    for (let x = 0; x < copyCols; x++) {
-                        const sIdx = (y + rowOffset) * prev.cols + x;
-                        const dIdx = y * fresh.cols + x;
-                        fresh.chars[dIdx] = prev.chars[sIdx];
-                        fresh.fgs[dIdx] = prev.fgs[sIdx];
-                        fresh.bgs[dIdx] = prev.bgs[sIdx];
-                    }
-                }
+            if (typeof tty.resize === 'function') {
+                tty.resize(nextCols, nextRows);
             }
-
-            const clampedX = Math.max(0, Math.min(nextCols - 1, prevCur.x || 0));
-            const clampedY = Math.max(0, Math.min(nextRows - 1, prevCur.y || 0));
-            if (typeof fresh.setCursor === 'function') {
-                fresh.setCursor(clampedX, clampedY);
-            }
-            if (typeof fresh.drawCursor === 'function' && prevCur.visible !== undefined) {
-                fresh.drawCursor(prevCur.visible);
-            }
-
-            tty = wrapTty(fresh);
+            win.invalidate();
         }
     }
 
     async function startShell() {
-        if (!tty) return;
+        if (!tty || shellStarted) return;
+        shellStarted = true;
+
         if (!OS.fs || typeof OS.fs.exists !== 'function' || !OS.fs.exists('/bin/shell.js')) {
             tty.println('Missing /bin/shell.js', 9);
             win.invalidate();
@@ -107,7 +40,7 @@ function createApp(win) {
         try {
             await OS.exec('/bin/shell.js', [], OS.env || {}, tty);
         } catch (err) {
-            if (tty && typeof tty.println === 'function') {
+            if (typeof tty.println === 'function') {
                 tty.println(`SHELL EXIT: ${formatErr(err)}`, 9);
             }
             win.invalidate();
@@ -117,6 +50,10 @@ function createApp(win) {
     return {
         init() {
             startShell();
+        },
+
+        onResize(w) {
+            syncTtySize(w);
         },
 
         onKey(key) {
@@ -134,10 +71,18 @@ function createApp(win) {
             }
         },
 
+        update() {
+            if (tty && tty.dirty) {
+                win.invalidate();
+            }
+        },
+
         render(w) {
-            syncTtySize(w);
+            const target = w || win;
+            syncTtySize(target);
+
             OS.gfx.clear(0);
-            OS.gfx.rect(0, 0, w.w, w.h, 0, true);
+            OS.gfx.rect(0, 0, target.w, target.h, 0, true);
 
             if (!tty || !tty.chars) return;
 
@@ -153,8 +98,15 @@ function createApp(win) {
             }
 
             const cur = typeof tty.getCursor === 'function' ? tty.getCursor() : null;
-            if (cur && cur.visible) {
-                OS.gfx.drawText('_', cur.x * cellW, cur.y * cellH, 15, -1);
+            if (
+                cur &&
+                cur.visible &&
+                cur.x >= 0 &&
+                cur.x < tty.cols &&
+                cur.y >= 0 &&
+                cur.y < tty.rows
+            ) {
+                OS.gfx.drawChar('_', cur.x * cellW, cur.y * cellH, 15, -1);
             }
 
             if (tty.dirty && typeof tty.markClean === 'function') {

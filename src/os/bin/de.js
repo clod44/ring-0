@@ -194,7 +194,9 @@ function showErrorPopup(title, message) {
         h: ph,
         app: popupApp,
     });
-    focusWindow(popup);
+    if (popup) {
+        focusWindow(popup);
+    }
     return popup;
 }
 
@@ -265,37 +267,47 @@ function createWindow({
     args = [],
 }) {
     const scale = gfx.scale;
+    const initW = Math.max(48, w | 0);
+    const initH = Math.max(32, h | 0);
+
     const win = {
         id: nextWinId++,
         title,
         appPath: appPath || null,
         x: x | 0,
         y: y | 0,
-        w: w | 0,
-        h: h | 0,
+        w: initW,
+        h: initH,
         args,
         minimized: false,
         maximized: false,
         restoreRect: null,
-        buf: gfx.createBuffer(w * scale, h * scale, scale),
+        buf: gfx.createBuffer(initW * scale, initH * scale, scale),
         dirty: true,
         app: {},
         invalidate() {
             this.dirty = true;
         },
         resize(nextW, nextH) {
-            const maxW = Math.max(40, gfx.width - this.x - BORDER * 2);
+            const maxW = Math.max(48, gfx.width - this.x - BORDER * 2);
             const maxH = Math.max(32, gfx.height - this.y - TITLE_H - BORDER * 2);
             const nw = Math.max(48, Math.min(maxW, nextW | 0));
             const nh = Math.max(32, Math.min(maxH, nextH | 0));
-            if (nw === this.w && nh === this.h && this.buf) {
-                this.dirty = true;
-                return;
+            const sizeChanged = nw !== this.w || nh !== this.h || !this.buf;
+
+            if (sizeChanged) {
+                const s = gfx.scale;
+                this.w = nw;
+                this.h = nh;
+                this.buf = gfx.createBuffer(nw * s, nh * s, s);
+                if (this.app && typeof this.app.onResize === 'function') {
+                    try {
+                        this.app.onResize(this, api);
+                    } catch (err) {
+                        showErrorPopup(`RESIZE: ${this.title}`, err);
+                    }
+                }
             }
-            const s = gfx.scale;
-            this.w = nw;
-            this.h = nh;
-            this.buf = gfx.createBuffer(nw * s, nh * s, s);
             this.dirty = true;
         },
         toggleMinimize() {
@@ -303,8 +315,8 @@ function createWindow({
             if (this.minimized) {
                 clearPointerCaptureFor(this);
             } else {
-                focusWindow(this);
                 this.dirty = true;
+                focusWindow(this);
             }
         },
         toggleMaximize() {
@@ -317,6 +329,7 @@ function createWindow({
                 this.x = 0;
                 this.y = topY;
                 this.maximized = true;
+                this.dirty = true;
                 this.resize(maxW, maxH);
             } else if (this.restoreRect) {
                 const r = this.restoreRect;
@@ -324,6 +337,7 @@ function createWindow({
                 this.y = r.y;
                 this.restoreRect = null;
                 this.maximized = false;
+                this.dirty = true;
                 this.resize(r.w, r.h);
             }
             focusWindow(this);
@@ -367,8 +381,11 @@ function focusWindow(win) {
     if (!win) return;
     const idx = windows.indexOf(win);
     if (idx !== -1 && idx !== windows.length - 1) {
+        const prevTop = windows[windows.length - 1];
+        if (prevTop) prevTop.dirty = true;
         windows.splice(idx, 1);
         windows.push(win);
+        win.dirty = true;
     }
 }
 
@@ -436,7 +453,6 @@ function compositeWindow(win, isFocused) {
                 win.app.render(win, api);
             });
         } catch (err) {
-            win.dirty = false;
             gfx.withTarget(win.buf, () => {
                 gfx.clear(1);
                 gfx.drawText('RENDER ERROR', 4, 4, 9, -1);
@@ -461,7 +477,7 @@ function compositeWindow(win, isFocused) {
     gfx.line(
         win.x + BORDER,
         win.y + BORDER + TITLE_H - 1,
-        win.x + win.w,
+        win.x + BORDER + win.w - 1,
         win.y + BORDER + TITLE_H - 1,
         isFocused ? 15 : 7,
     );
@@ -656,8 +672,9 @@ function drawDesktopIcons() {
     }
 }
 
-for (let i = 0; i < (args || []).length; i++) {
-    const path = args[i];
+const startupArgs = typeof args !== 'undefined' && Array.isArray(args) ? args : [];
+for (let i = 0; i < startupArgs.length; i++) {
+    const path = startupArgs[i];
     const name = String(path).split('/').pop().replace(/\.js$/, '').toUpperCase();
     createWindow({
         title: name || 'APP',
@@ -765,6 +782,8 @@ try {
                         } else if (hit.inMax) {
                             hit.win.toggleMaximize();
                         } else if (hit.inResize) {
+                            dragWin = null;
+                            activeMouseWin = null;
                             resizeWin = hit.win;
                             resizeStartX = mx;
                             resizeStartY = my;
@@ -815,6 +834,7 @@ try {
                             CFG.topBarHeight + 1,
                             Math.min(gfx.height - TITLE_H, my - dragOffY),
                         );
+                        dragWin.dirty = true;
                     } else if (
                         activeMouseWin &&
                         !activeMouseWin.minimized &&
