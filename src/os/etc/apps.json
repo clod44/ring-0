@@ -14,5 +14,13 @@
         "mode": "window",
         "w": 200,
         "h": 120
+    },
+    {
+        "id": "explorer",
+        "name": "File Explorer",
+        "exec": "/apps/explorer.js",
+        "mode": "window",
+        "w": 200,
+        "h": 120
     }
 ]
