@@ -5,20 +5,28 @@ const handlerStack = [];
 let running = false;
 
 function dispatchKey(key) {
-    if (handlerStack.length > 0) {
-        const top = handlerStack[handlerStack.length - 1];
-        if (typeof top === 'function') {
-            top(key);
-            return;
-        }
-        if (top && typeof top.pushKey === 'function') {
-            top.pushKey(key);
-            return;
-        }
-    }
+    if (key === null || key === undefined) return;
 
-    if (focusedTty && typeof focusedTty.pushKey === 'function') {
-        focusedTty.pushKey(key);
+    try {
+        if (handlerStack.length > 0) {
+            const top = handlerStack[handlerStack.length - 1];
+            if (typeof top === 'function') {
+                top(key);
+                return;
+            }
+            if (top && typeof top.pushKey === 'function') {
+                top.pushKey(key);
+                return;
+            }
+        }
+
+        if (focusedTty && typeof focusedTty.pushKey === 'function') {
+            focusedTty.pushKey(key);
+        }
+    } catch (err) {
+        if (typeof OS.log === 'function') {
+            OS.log(`INPUT dispatch error: ${err && err.message ? err.message : String(err)}`);
+        }
     }
 }
 
