@@ -436,11 +436,19 @@ const OS = {
 };
 
 // --- 3. KERNEL BOOT SEQUENCE ---
-
 (async function boot() {
-    OS.log('KERNEL: OS.fs & OS.exec online.');
+    try {
+        OS.log('KERNEL: OS.fs & OS.exec online.');
+        await OS.exec('/sys/gfx.js');
+        await OS.exec('/sys/tty.js');
+        await OS.exec('/sys/term.js');
 
-    await OS.exec('/sys/gfx.js');
-    await OS.exec('/sys/tty.js');
-    await OS.exec('/bin/shell.js');
+        OS.term.start(OS.tty);
+        await OS.exec('/bin/shell.js');
+    } catch (err) {
+        OS.log('BOOT ERROR: ' + (err && err.stack ? err.stack : err));
+        if (OS.tty) {
+            OS.tty.println('BOOT ERROR: ' + (err && err.message ? err.message : err), 9);
+        }
+    }
 })();

@@ -12,17 +12,11 @@ const bgs = new Uint8Array(CELLS).fill(DEFAULT_BG);
 
 let cursorX = 0;
 let cursorY = 0;
+let cursorVisible = true;
+let dirty = true;
 
 function cellIndex(x, y) {
     return y * COLS + x;
-}
-
-function renderCell(x, y, invert = false) {
-    const idx = cellIndex(x, y);
-    const ch = String.fromCharCode(chars[idx]);
-    const fg = fgs[idx];
-    const bg = bgs[idx];
-    OS.gfx.drawChar(ch, x * 8, y * 8, invert ? bg : fg, invert ? fg : bg);
 }
 
 function writeCell(x, y, ch, fg, bg) {
@@ -30,7 +24,7 @@ function writeCell(x, y, ch, fg, bg) {
     chars[idx] = ch.charCodeAt(0) & 0xff;
     fgs[idx] = fg;
     bgs[idx] = bg;
-    OS.gfx.drawChar(ch, x * 8, y * 8, fg, bg);
+    dirty = true;
 }
 
 function scroll(bg = DEFAULT_BG) {
@@ -44,12 +38,8 @@ function scroll(bg = DEFAULT_BG) {
     fgs.fill(DEFAULT_FG, lastRow);
     bgs.fill(bg, lastRow);
 
-    // Shift VRAM up by 8 pixel rows
-    const rowBytes = OS.width * 8;
-    OS.vram.copyWithin(0, rowBytes);
-    OS.vram.fill(bg, OS.vram.length - rowBytes);
-
     cursorY = ROWS - 1;
+    dirty = true;
 }
 
 function newline(bg = DEFAULT_BG) {
@@ -57,21 +47,38 @@ function newline(bg = DEFAULT_BG) {
     cursorY++;
     if (cursorY >= ROWS) {
         scroll(bg);
+    } else {
+        dirty = true;
     }
 }
 
 const tty = {
     cols: COLS,
     rows: ROWS,
+    chars,
+    fgs,
+    bgs,
     capture: null, // When set to an array, stdout is captured instead of drawn
+
+    get dirty() {
+        return dirty;
+    },
+
+    markClean() {
+        dirty = false;
+    },
+
+    invalidate() {
+        dirty = true;
+    },
 
     clear(bg = DEFAULT_BG) {
         chars.fill(32);
         fgs.fill(DEFAULT_FG);
         bgs.fill(bg);
-        OS.gfx.clear(bg);
         cursorX = 0;
         cursorY = 0;
+        dirty = true;
     },
 
     clearToEnd(bg = DEFAULT_BG) {
@@ -83,14 +90,16 @@ const tty = {
     setCursor(x, y) {
         cursorX = Math.max(0, Math.min(COLS - 1, x | 0));
         cursorY = Math.max(0, Math.min(ROWS - 1, y | 0));
+        dirty = true;
     },
 
     getCursor() {
-        return { x: cursorX, y: cursorY };
+        return { x: cursorX, y: cursorY, visible: cursorVisible };
     },
 
     drawCursor(visible) {
-        renderCell(cursorX, cursorY, visible);
+        cursorVisible = Boolean(visible);
+        dirty = true;
     },
 
     putChar(ch, fg = DEFAULT_FG, bg = DEFAULT_BG) {
@@ -101,6 +110,7 @@ const tty = {
 
         if (ch === '\r') {
             cursorX = 0;
+            dirty = true;
             return;
         }
 
@@ -150,16 +160,14 @@ const tty = {
     async readLine(fg = DEFAULT_FG, bg = DEFAULT_BG) {
         let buffer = '';
         let frame = 0;
-        let cursorVisible = true;
 
         this.drawCursor(true);
 
         while (true) {
             let key;
             while ((key = OS.pollKey()) !== null) {
-                this.drawCursor(false);
-
                 if (key === 'Enter') {
+                    this.drawCursor(false);
                     this.putChar('\n', fg, bg);
                     return buffer;
                 }
@@ -175,14 +183,12 @@ const tty = {
                 }
 
                 frame = 0;
-                cursorVisible = true;
                 this.drawCursor(true);
             }
 
             frame++;
             if (frame % 30 === 0) {
-                cursorVisible = !cursorVisible;
-                this.drawCursor(cursorVisible);
+                this.drawCursor(!cursorVisible);
             }
 
             await OS.nextFrame();

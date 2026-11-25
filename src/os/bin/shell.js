@@ -1,5 +1,8 @@
 const { createHistory, readLine } = OS.require('/lib/readline.js');
 
+const tty = OS.tty;
+env = env || (OS.env ??= {});
+
 // --- 1. CONFIG, THEME & ENV ---
 
 const THEME = {
@@ -26,7 +29,7 @@ const BUILTINS = {
         const expr = cmdArgs.join(' ');
         const eqIdx = expr.indexOf('=');
         if (eqIdx <= 0) {
-            OS.tty.println('Usage: export KEY=VALUE', THEME.warn);
+            tty.println('Usage: export KEY=VALUE', THEME.warn);
             return 1;
         }
         env[expr.slice(0, eqIdx).trim()] = expr.slice(eqIdx + 1).trim();
@@ -35,14 +38,14 @@ const BUILTINS = {
 
     env() {
         for (const [k, v] of Object.entries(env)) {
-            OS.tty.println(`${k}=${v}`, THEME.text);
+            tty.println(`${k}=${v}`, THEME.text);
         }
         return 0;
     },
 
     history() {
         history.items.forEach((item, i) => {
-            OS.tty.println(`${i + 1}  ${item}`, THEME.text);
+            tty.println(`${i + 1}  ${item}`, THEME.text);
         });
         return 0;
     },
@@ -164,11 +167,11 @@ function resolveCommand(cmd) {
 
 async function runCommand(cmd, cmdArgs, stdin, captureOutput) {
     const prevStdin = OS.stdin;
-    const prevCapture = OS.tty.capture;
+    const prevCapture = tty.capture;
     const buffer = captureOutput ? [] : null;
 
     OS.stdin = stdin;
-    OS.tty.capture = buffer;
+    tty.capture = buffer;
 
     let code = 0;
     try {
@@ -177,19 +180,19 @@ async function runCommand(cmd, cmdArgs, stdin, captureOutput) {
         } else {
             const target = resolveCommand(cmd);
             if (!target) {
-                OS.tty.capture = prevCapture;
-                OS.tty.println(`shell: ${cmd}: command not found`, THEME.error);
+                tty.capture = prevCapture;
+                tty.println(`shell: ${cmd}: command not found`, THEME.error);
                 return { code: 127, output: '' };
             }
             code = (await OS.exec(target, cmdArgs, env)) ?? 0;
         }
     } catch (err) {
-        OS.tty.capture = prevCapture;
-        OS.tty.println(`${cmd}: ${err.message}`, THEME.error);
+        tty.capture = prevCapture;
+        tty.println(`${cmd}: ${err.message}`, THEME.error);
         return { code: 1, output: '' };
     } finally {
         OS.stdin = prevStdin;
-        OS.tty.capture = prevCapture;
+        tty.capture = prevCapture;
     }
 
     return { code, output: buffer ? buffer.join('') : '' };
@@ -231,7 +234,7 @@ async function runPipeline(tokens) {
 
         if (redirMode) {
             if (!redirFile) {
-                OS.tty.println('shell: syntax error near redirection', THEME.error);
+                tty.println('shell: syntax error near redirection', THEME.error);
                 return 1;
             }
             const dest = OS.resolvePath(redirFile);
@@ -281,10 +284,10 @@ async function runLine(line) {
 
 // --- 6. MAIN REPL ---
 
-OS.tty.clear(THEME.bg);
-OS.tty.println('RING-0 // SHELL v0.6', THEME.banner);
-OS.tty.println('type "tree" to see the file system', THEME.text);
-OS.tty.println('', THEME.text);
+tty.clear(THEME.bg);
+tty.println('RING-0 // SHELL v0.6', THEME.banner);
+tty.println('type "tree" to see the file system', THEME.text);
+tty.println('', THEME.text);
 
 while (true) {
     const line = (
