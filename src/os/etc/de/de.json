@@ -1,0 +1,8 @@
+{
+    "desktopBg": 6,
+    "titleHeight": 12,
+    "borderWidth": 1,
+    "debugHud": false,
+    "pluginDir": "/etc/de/plugins",
+    "plugins": []
+}

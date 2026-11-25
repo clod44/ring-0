@@ -4,27 +4,15 @@ const physW = OS.width;
 const physH = OS.height;
 const savedVram = new Uint8Array(vram);
 
+const LAYERS = ['background', 'desktop', 'windows', 'panel', 'overlay'];
+
 const DEFAULT_CFG = {
     desktopBg: 6,
-    topBarHeight: 11,
-    topBarBg: 0,
-    topBarBorder: 8,
-    topBarFg: 15,
     titleHeight: 12,
     borderWidth: 1,
     debugHud: false,
-    icon: {
-        boxW: 24,
-        boxH: 20,
-        cellW: 56,
-        cellH: 38,
-        topY: 16,
-        maxLabelChars: 8,
-        boxBg: 1,
-        boxBorder: 15,
-        glyphFg: 11,
-        labelFg: 15,
-    },
+    pluginDir: '/etc/de/plugins',
+    plugins: [],
 };
 
 function formatErr(err) {
@@ -59,9 +47,7 @@ function readJsonSafe(path) {
 }
 
 function loadDeConfig() {
-    const rawCfg = readJsonSafe('/etc/de.json') || {};
-    const rawIcon = rawCfg.icon && typeof rawCfg.icon === 'object' ? rawCfg.icon : {};
-
+    const rawCfg = readJsonSafe('/etc/de/de.json') || {};
     const num = (val, fallback, min = 0) => {
         const n = Number(val);
         return Number.isFinite(n) && n >= min ? n : fallback;
@@ -69,25 +55,11 @@ function loadDeConfig() {
 
     return {
         desktopBg: num(rawCfg.desktopBg, DEFAULT_CFG.desktopBg),
-        topBarHeight: num(rawCfg.topBarHeight, DEFAULT_CFG.topBarHeight, 8),
-        topBarBg: num(rawCfg.topBarBg, DEFAULT_CFG.topBarBg),
-        topBarBorder: num(rawCfg.topBarBorder, DEFAULT_CFG.topBarBorder),
-        topBarFg: num(rawCfg.topBarFg, DEFAULT_CFG.topBarFg),
         titleHeight: num(rawCfg.titleHeight, DEFAULT_CFG.titleHeight, 10),
         borderWidth: num(rawCfg.borderWidth, DEFAULT_CFG.borderWidth, 0),
         debugHud: Boolean(rawCfg.debugHud ?? DEFAULT_CFG.debugHud),
-        icon: {
-            boxW: num(rawIcon.boxW, DEFAULT_CFG.icon.boxW, 8),
-            boxH: num(rawIcon.boxH, DEFAULT_CFG.icon.boxH, 8),
-            cellW: num(rawIcon.cellW, DEFAULT_CFG.icon.cellW, 16),
-            cellH: num(rawIcon.cellH, DEFAULT_CFG.icon.cellH, 16),
-            topY: num(rawIcon.topY, DEFAULT_CFG.icon.topY, 0),
-            maxLabelChars: num(rawIcon.maxLabelChars, DEFAULT_CFG.icon.maxLabelChars, 1),
-            boxBg: num(rawIcon.boxBg, DEFAULT_CFG.icon.boxBg),
-            boxBorder: num(rawIcon.boxBorder, DEFAULT_CFG.icon.boxBorder),
-            glyphFg: num(rawIcon.glyphFg, DEFAULT_CFG.icon.glyphFg),
-            labelFg: num(rawIcon.labelFg, DEFAULT_CFG.icon.labelFg),
-        },
+        pluginDir: typeof rawCfg.pluginDir === 'string' ? rawCfg.pluginDir : DEFAULT_CFG.pluginDir,
+        plugins: Array.isArray(rawCfg.plugins) ? rawCfg.plugins : DEFAULT_CFG.plugins,
     };
 }
 
@@ -96,7 +68,103 @@ const TITLE_H = CFG.titleHeight;
 const BORDER = Math.max(1, CFG.borderWidth);
 let debugHudEnabled = CFG.debugHud;
 
-// Z-order list: index 0 = back, length - 1 = front (focused)
+// --- EVENT BUS ---
+const listeners = new Map();
+
+function on(event, fn) {
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    listeners.get(event).add(fn);
+    return () => off(event, fn);
+}
+
+function off(event, fn) {
+    const set = listeners.get(event);
+    if (set) set.delete(fn);
+}
+
+function emit(event, payload) {
+    const set = listeners.get(event);
+    if (!set) return;
+    for (const fn of Array.from(set)) {
+        try {
+            fn(payload);
+        } catch (err) {
+            OS.log(`DE event [${event}] error: ${formatErrDetail(err)}`);
+        }
+    }
+}
+
+// --- STRUTS & WORKAREA ---
+const struts = new Map();
+let workarea = { x: 0, y: 0, w: gfx.width, h: gfx.height };
+
+function recomputeWorkarea() {
+    let top = 0;
+    let bottom = 0;
+    let left = 0;
+    let right = 0;
+
+    for (const s of struts.values()) {
+        if (s.top > top) top = s.top;
+        if (s.bottom > bottom) bottom = s.bottom;
+        if (s.left > left) left = s.left;
+        if (s.right > right) right = s.right;
+    }
+
+    const x = Math.max(0, Math.min(gfx.width - 16, left | 0));
+    const y = Math.max(0, Math.min(gfx.height - 16, top | 0));
+    const w = Math.max(16, gfx.width - x - Math.max(0, right | 0));
+    const h = Math.max(16, gfx.height - y - Math.max(0, bottom | 0));
+
+    workarea = { x, y, w, h };
+    emit('workarea:change', { ...workarea });
+}
+
+function setStrut(id, strut = {}) {
+    if (!id) return;
+    struts.set(String(id), {
+        top: Math.max(0, Number(strut.top) || 0),
+        bottom: Math.max(0, Number(strut.bottom) || 0),
+        left: Math.max(0, Number(strut.left) || 0),
+        right: Math.max(0, Number(strut.right) || 0),
+    });
+    recomputeWorkarea();
+}
+
+function removeStrut(id) {
+    if (struts.delete(String(id))) {
+        recomputeWorkarea();
+    }
+}
+
+// --- PLUGIN REGISTRY & LAYERS ---
+const plugins = [];
+
+function registerPlugin(spec = {}) {
+    const layer = LAYERS.includes(spec.layer) ? spec.layer : 'desktop';
+    const order = Number.isFinite(Number(spec.order)) ? Number(spec.order) : 100;
+    const entry = {
+        id: spec.id || `plugin-${plugins.length + 1}`,
+        layer,
+        order,
+        init: typeof spec.init === 'function' ? spec.init : null,
+        update: typeof spec.update === 'function' ? spec.update : null,
+        render: typeof spec.render === 'function' ? spec.render : null,
+        onMouse: typeof spec.onMouse === 'function' ? spec.onMouse : null,
+        onKey: typeof spec.onKey === 'function' ? spec.onKey : null,
+        destroy: typeof spec.destroy === 'function' ? spec.destroy : null,
+    };
+    plugins.push(entry);
+    plugins.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    return entry;
+}
+
+function pluginsInLayer(layer, reverse = false) {
+    const list = plugins.filter((p) => p.layer === layer);
+    return reverse ? list.reverse() : list;
+}
+
+// --- WINDOW MANAGER ---
 const windows = [];
 let nextWinId = 1;
 
@@ -109,7 +177,6 @@ let resizeStartY = 0;
 let resizeOrigW = 0;
 let resizeOrigH = 0;
 let activeMouseWin = null;
-let minBarItems = [];
 
 function clearPointerCaptureFor(win) {
     if (dragWin === win) dragWin = null;
@@ -140,10 +207,10 @@ function showErrorPopup(title, message) {
     const detail = formatErrDetail(message);
     OS.log(`DE POPUP [${title}]: ${detail}`);
 
-    const pw = Math.min(240, Math.max(140, gfx.width - 16));
+    const pw = Math.min(240, Math.max(140, workarea.w - 16));
     const ph = 92;
-    const px = Math.max(4, Math.floor((gfx.width - pw) / 2));
-    const py = Math.max(CFG.topBarHeight + 6, Math.floor((gfx.height - ph) / 2));
+    const px = workarea.x + Math.max(4, Math.floor((workarea.w - pw) / 2));
+    const py = workarea.y + Math.max(4, Math.floor((workarea.h - ph) / 2));
 
     const maxChars = Math.max(8, Math.floor((pw - 12) / 8));
     const lines = wrapLines(detail, maxChars).slice(0, 5);
@@ -209,43 +276,40 @@ function dumpDebugState(reason = 'manual') {
         )
         .join(' | ');
     OS.log(
-        `DE DBG [${reason}]: wins=${windows.length} top=${top ? `#${top.id}:${top.title}` : 'none'} drag=${dragWin ? `#${dragWin.id}` : 'none'} resize=${resizeWin ? `#${resizeWin.id}` : 'none'} mouseWin=${activeMouseWin ? `#${activeMouseWin.id}` : 'none'} [${summary}]`,
+        `DE DBG [${reason}]: wins=${windows.length} top=${top ? `#${top.id}:${top.title}` : 'none'} plugins=${plugins.length} workarea=(${workarea.x},${workarea.y},${workarea.w}x${workarea.h}) [${summary}]`,
     );
 }
 
-function loadAppModule(appPath) {
-    if (!appPath || typeof appPath !== 'string') {
-        throw new Error('Invalid appPath');
+function loadJsModule(filePath) {
+    if (!filePath || typeof filePath !== 'string') {
+        throw new Error('Invalid module path');
     }
-    const resolved = typeof OS.resolvePath === 'function' ? OS.resolvePath(appPath) : appPath;
+    const resolved = typeof OS.resolvePath === 'function' ? OS.resolvePath(filePath) : filePath;
     if (!OS.fs || typeof OS.fs.read !== 'function') {
         throw new Error('OS.fs.read unavailable');
     }
     const code = OS.fs.read(resolved);
     if (code === null || code === undefined) {
-        throw new Error(`App not found: ${resolved}`);
+        throw new Error(`Module not found: ${resolved}`);
     }
 
     try {
         const module = { exports: {} };
-        const fn = new Function('OS', 'HW', 'module', 'exports', `"use strict";\n${code}`);
-        fn(OS, HW, module, module.exports);
-
+        const fn = new Function('OS', 'HW', 'DE', 'module', 'exports', `"use strict";\n${code}`);
+        fn(OS, HW, api, module, module.exports);
         return module.exports && module.exports.default ? module.exports.default : module.exports;
     } catch (err) {
-        if (typeof OS.log === 'function') {
-            OS.log(
-                `DE loadAppModule [${resolved}] err=${err && err.name}: ${err && err.message}\nstack=${err && err.stack ? err.stack : ''}`,
-            );
-        }
+        OS.log(
+            `DE loadJsModule [${resolved}] err=${err && err.name}: ${err && err.message}\nstack=${err && err.stack ? err.stack : ''}`,
+        );
         throw new Error(`[${resolved}] ${err && err.message ? err.message : String(err)}`);
     }
 }
 
-function resolveAppInstance(appOrPath, win, api) {
+function resolveAppInstance(appOrPath, win) {
     let raw = appOrPath;
     if (typeof appOrPath === 'string') {
-        raw = loadAppModule(appOrPath);
+        raw = loadJsModule(appOrPath);
     }
     if (typeof raw === 'function') {
         return raw(win, api) || {};
@@ -258,8 +322,8 @@ function resolveAppInstance(appOrPath, win, api) {
 
 function createWindow({
     title = 'Window',
-    x = 20,
-    y = 20,
+    x = workarea.x + 16,
+    y = workarea.y + 16,
     w = 140,
     h = 90,
     app,
@@ -267,15 +331,23 @@ function createWindow({
     args = [],
 }) {
     const scale = gfx.scale;
-    const initW = Math.max(48, w | 0);
-    const initH = Math.max(32, h | 0);
+    const initW = Math.max(48, Math.min(workarea.w - BORDER * 2, w | 0));
+    const initH = Math.max(32, Math.min(workarea.h - TITLE_H - BORDER * 2, h | 0));
+    const clampedX = Math.max(
+        workarea.x,
+        Math.min(workarea.x + workarea.w - initW - BORDER * 2, x | 0),
+    );
+    const clampedY = Math.max(
+        workarea.y,
+        Math.min(workarea.y + workarea.h - initH - TITLE_H - BORDER * 2, y | 0),
+    );
 
     const win = {
         id: nextWinId++,
         title,
         appPath: appPath || null,
-        x: x | 0,
-        y: y | 0,
+        x: clampedX,
+        y: clampedY,
         w: initW,
         h: initH,
         args,
@@ -285,6 +357,10 @@ function createWindow({
         buf: gfx.createBuffer(initW * scale, initH * scale, scale),
         dirty: true,
         app: {},
+        setTitle(nextTitle) {
+            this.title = String(nextTitle || '');
+            emit('window:title', this);
+        },
         invalidate() {
             this.dirty = true;
         },
@@ -318,16 +394,16 @@ function createWindow({
                 this.dirty = true;
                 focusWindow(this);
             }
+            emit('window:minimize', this);
         },
         toggleMaximize() {
             this.minimized = false;
             if (!this.maximized) {
                 this.restoreRect = { x: this.x, y: this.y, w: this.w, h: this.h };
-                const topY = CFG.topBarHeight + 1;
-                const maxW = Math.max(48, gfx.width - BORDER * 2);
-                const maxH = Math.max(32, gfx.height - topY - TITLE_H - BORDER * 2);
-                this.x = 0;
-                this.y = topY;
+                const maxW = Math.max(48, workarea.w - BORDER * 2);
+                const maxH = Math.max(32, workarea.h - TITLE_H - BORDER * 2);
+                this.x = workarea.x;
+                this.y = workarea.y;
                 this.maximized = true;
                 this.dirty = true;
                 this.resize(maxW, maxH);
@@ -341,6 +417,7 @@ function createWindow({
                 this.resize(r.w, r.h);
             }
             focusWindow(this);
+            emit('window:maximize', this);
         },
         close() {
             const idx = windows.indexOf(this);
@@ -356,11 +433,12 @@ function createWindow({
                     );
                 }
             }
+            emit('window:close', this);
         },
     };
 
     try {
-        win.app = resolveAppInstance(appPath || app, win, api);
+        win.app = resolveAppInstance(appPath || app, win);
         if (typeof win.app.init === 'function') {
             win.app.init(win, api);
         }
@@ -374,6 +452,7 @@ function createWindow({
     }
 
     windows.push(win);
+    emit('window:open', win);
     return win;
 }
 
@@ -386,10 +465,11 @@ function focusWindow(win) {
         windows.splice(idx, 1);
         windows.push(win);
         win.dirty = true;
+        emit('window:focus', win);
     }
 }
 
-function hitTest(mx, my) {
+function hitTestWindow(mx, my) {
     for (let i = windows.length - 1; i >= 0; i--) {
         const win = windows[i];
         if (win.minimized) continue;
@@ -397,7 +477,6 @@ function hitTest(mx, my) {
         const outerW = win.w + BORDER * 2;
         const outerH = win.h + TITLE_H + BORDER * 2;
 
-        // Bottom-right corner resize grip (slightly forgiving hit box)
         const inResize =
             !win.maximized &&
             mx >= win.x + outerW - 9 &&
@@ -482,18 +561,23 @@ function compositeWindow(win, isFocused) {
         isFocused ? 15 : 7,
     );
 
-    const maxChars = Math.max(0, Math.floor((win.w - 36) / 8));
-    gfx.drawText(win.title.slice(0, maxChars), win.x + BORDER + 3, win.y + BORDER + 2, 15, -1);
+    const titleX = win.x + BORDER + 3;
+    const availPx = Math.max(0, minX - 2 - titleX);
+    const maxChars = Math.floor(availPx / 8);
+    if (maxChars > 0) {
+        const shown =
+            win.title.length > maxChars && maxChars > 1
+                ? win.title.slice(0, maxChars - 1) + '~'
+                : win.title.slice(0, maxChars);
+        gfx.drawText(shown, titleX, win.y + BORDER + 2, 15, -1);
+    }
 
-    // Minimize button (_)
     gfx.rect(minX, btnY, 9, 9, 7, true);
     gfx.drawChar('_', minX + 1, btnY - 1, 0, -1);
 
-    // Maximize / restore button (+)
     gfx.rect(maxX, btnY, 9, 9, 2, true);
     gfx.drawChar(win.maximized ? '-' : '+', maxX + 1, btnY, 15, -1);
 
-    // Close button (x)
     gfx.rect(closeX, btnY, 9, 9, 9, true);
     gfx.drawChar('x', closeX + 1, btnY, 15, -1);
 
@@ -507,58 +591,12 @@ function compositeWindow(win, isFocused) {
         physH,
     );
 
-    // Bottom-right corner resize grip
     if (!win.maximized) {
         const gx = win.x + outerW - 1;
         const gy = win.y + outerH - 1;
         gfx.line(gx - 6, gy, gx, gy - 6, isFocused ? 11 : 7);
         gfx.line(gx - 3, gy, gx, gy - 3, isFocused ? 15 : 8);
     }
-}
-
-function drawTopBar() {
-    gfx.rect(0, 0, gfx.width, CFG.topBarHeight, CFG.topBarBg, true);
-    gfx.line(0, CFG.topBarHeight, gfx.width - 1, CFG.topBarHeight, CFG.topBarBorder);
-
-    minBarItems = [];
-    let xCursor = 4;
-
-    const minWins = windows.filter((w) => w.minimized);
-    for (const mw of minWins) {
-        const label = `[${mw.title.slice(0, 6)}]`;
-        const chipW = label.length * 8 + 4;
-        if (xCursor + chipW >= gfx.width - 4) break;
-        gfx.rect(xCursor, 1, chipW, CFG.topBarHeight - 2, 1, true);
-        gfx.rect(xCursor, 1, chipW, CFG.topBarHeight - 2, 11, false);
-        gfx.drawText(label, xCursor + 2, 2, 15, -1);
-        minBarItems.push({
-            win: mw,
-            x0: xCursor,
-            x1: xCursor + chipW,
-            y0: 0,
-            y1: CFG.topBarHeight,
-        });
-        xCursor += chipW + 4;
-    }
-
-    const activeCount = windows.filter((w) => !w.minimized).length;
-    const barText = debugHudEnabled
-        ? `DBG W:${activeCount}/${windows.length} FPS:${fps} Q:${pendingKeys.length}`
-        : `RING-0 DE | WIN:${activeCount} | ESC:EXIT`;
-    const availW = Math.max(0, gfx.width - xCursor - 4);
-    if (availW >= 16) {
-        gfx.drawText(barText.slice(0, Math.floor(availW / 8)), xCursor, 2, CFG.topBarFg, -1);
-    }
-}
-
-function topBarHitTest(mx, my) {
-    if (my < 0 || my > CFG.topBarHeight) return null;
-    for (const item of minBarItems) {
-        if (mx >= item.x0 && mx <= item.x1 && my >= item.y0 && my <= item.y1) {
-            return item.win;
-        }
-    }
-    return null;
 }
 
 function drawCursor(cx, cy, pressed) {
@@ -568,8 +606,20 @@ function drawCursor(cx, cy, pressed) {
     gfx.pixel(cx, cy, 9);
 }
 
+// --- PUBLIC CORE API PASSED TO PLUGINS & APPS ---
 const api = {
     config: CFG,
+    layers: LAYERS,
+    getWorkarea() {
+        return { ...workarea };
+    },
+    setStrut,
+    removeStrut,
+    registerPlugin,
+    on,
+    off,
+    emit,
+    readJson: readJsonSafe,
     spawnWindow(opts) {
         return createWindow(opts);
     },
@@ -586,113 +636,87 @@ const api = {
         }
         return null;
     },
+    isDebugHud() {
+        return debugHudEnabled;
+    },
     dumpDebug: dumpDebugState,
 };
 
-function loadDesktopApps() {
-    const parsed = readJsonSafe('/etc/apps.json');
-    if (!parsed) return [];
+// --- AUTO-DISCOVERY & PLUGIN LOADING ---
+function discoverPluginPaths(dirPath) {
+    const found = new Set();
 
-    const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed.apps) ? parsed.apps : [];
-    const { cellW, cellH, topY } = CFG.icon;
-    const cols = Math.max(1, Math.floor((gfx.width - 16) / cellW));
-
-    return list
-        .filter((item) => item && item.exec)
-        .map((item, idx) => {
-            const col = idx % cols;
-            const row = Math.floor(idx / cols);
-            const x = typeof item.x === 'number' ? item.x : 12 + col * cellW;
-            const y = typeof item.y === 'number' ? item.y : topY + row * cellH;
-            const label = item.name || item.id || item.exec.split('/').pop().replace(/\.js$/, '');
-            return {
-                id: item.id || label,
-                name: String(label),
-                exec: String(item.exec),
-                mode: item.mode === 'exec' ? 'exec' : 'window',
-                w: Number.isFinite(Number(item.w)) ? Number(item.w) : 155,
-                h: Number.isFinite(Number(item.h)) ? Number(item.h) : 85,
-                x: x | 0,
-                y: y | 0,
-            };
-        });
-}
-
-const desktopApps = loadDesktopApps();
-
-function iconHitTest(mx, my) {
-    const { boxW, boxH, maxLabelChars } = CFG.icon;
-    for (let i = desktopApps.length - 1; i >= 0; i--) {
-        const icon = desktopApps[i];
-        const label = icon.name.slice(0, maxLabelChars);
-        const hitW = Math.max(boxW, label.length * 8);
-        const hitH = boxH + 10;
-        if (mx >= icon.x && mx < icon.x + hitW && my >= icon.y && my < icon.y + hitH) {
-            return icon;
+    if (OS.fs && typeof OS.fs.listDir === 'function') {
+        try {
+            const canCheck =
+                typeof OS.fs.exists === 'function' && typeof OS.fs.isDir === 'function';
+            if (!canCheck || (OS.fs.exists(dirPath) && OS.fs.isDir(dirPath))) {
+                const entries = OS.fs.listDir(dirPath) || [];
+                for (const entry of entries) {
+                    if (!entry || entry.type !== 'file') continue;
+                    const p = entry.path || `${dirPath.replace(/\/+$/, '')}/${entry.name}`;
+                    if (p.endsWith('.js')) {
+                        found.add(p);
+                    }
+                }
+            }
+        } catch (err) {
+            OS.log(`DE: failed to list plugins in ${dirPath}: ${formatErrDetail(err)}`);
         }
     }
-    return null;
-}
 
-function launchDesktopApp(icon) {
-    if (icon.mode === 'exec') {
-        Promise.resolve()
-            .then(() => OS.exec(icon.exec, [], OS.env))
-            .then(() => {
-                if (OS.tty && typeof OS.tty.invalidate === 'function') {
-                    OS.tty.invalidate();
-                }
-            })
-            .catch((err) => showErrorPopup(`EXEC: ${icon.name}`, err));
-        return;
+    for (const p of CFG.plugins) {
+        if (typeof p === 'string' && p.trim()) {
+            found.add(p.trim());
+        } else if (p && typeof p.path === 'string' && p.enabled !== false) {
+            found.add(p.path.trim());
+        }
     }
 
-    const offset = (windows.length * 14) % 56;
-    createWindow({
-        title: icon.name.toUpperCase(),
-        x: 24 + offset,
-        y: 24 + offset,
-        w: icon.w,
-        h: icon.h,
-        appPath: icon.exec,
-    });
+    return Array.from(found).sort();
 }
 
-function formatLabel(name, maxChars) {
-    const s = String(name || '');
-    if (s.length <= maxChars) return s;
-    return maxChars > 1 ? s.slice(0, maxChars - 1) + '~' : s.slice(0, maxChars);
-}
+function initPlugins() {
+    const paths = discoverPluginPaths(CFG.pluginDir);
+    const loadedSpecs = [];
 
-function drawDesktopIcons() {
-    const { boxW, boxH, maxLabelChars, boxBg, boxBorder, glyphFg, labelFg } = CFG.icon;
-    for (const icon of desktopApps) {
-        const label = formatLabel(icon.name, maxLabelChars);
-        const labelW = label.length * 8;
-        const slotW = Math.max(boxW, labelW);
-        const boxX = icon.x + Math.floor((slotW - boxW) / 2);
-        const labelX = icon.x + Math.floor((slotW - labelW) / 2);
+    for (const path of paths) {
+        try {
+            const mod = loadJsModule(path);
+            const spec = typeof mod === 'function' ? mod(api) : mod;
+            if (spec && typeof spec === 'object') {
+                const entry = registerPlugin({ id: path, ...spec });
+                loadedSpecs.push({ entry, spec });
+            }
+        } catch (err) {
+            showErrorPopup(`PLUGIN: ${path.split('/').pop()}`, err);
+        }
+    }
 
-        gfx.rect(boxX, icon.y, boxW, boxH, boxBorder, false);
-        gfx.rect(boxX + 1, icon.y + 1, boxW - 2, boxH - 2, boxBg, true);
+    // Re-sort after plugins may have updated `order` in their returned spec
+    plugins.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
 
-        const glyph = icon.name.charAt(0).toUpperCase() || '?';
-        const glyphX = boxX + Math.floor((boxW - 8) / 2);
-        const glyphY = icon.y + Math.floor((boxH - 8) / 2);
-        gfx.drawChar(glyph, glyphX, glyphY, glyphFg, -1);
-
-        gfx.drawText(label, labelX, icon.y + boxH + 2, labelFg, -1);
+    for (const { entry, spec } of loadedSpecs) {
+        if (!entry.init) continue;
+        try {
+            entry.init(api, spec.config || {});
+        } catch (err) {
+            showErrorPopup(`INIT: ${entry.id}`, err);
+        }
     }
 }
 
+initPlugins();
+
+// Spawn any windows passed via `args` when launching DE
 const startupArgs = typeof args !== 'undefined' && Array.isArray(args) ? args : [];
 for (let i = 0; i < startupArgs.length; i++) {
     const path = startupArgs[i];
     const name = String(path).split('/').pop().replace(/\.js$/, '').toUpperCase();
     createWindow({
         title: name || 'APP',
-        x: 16 + i * 72,
-        y: 22 + i * 32,
+        x: workarea.x + 16 + i * 24,
+        y: workarea.y + 16 + i * 20,
         w: 155,
         h: 85,
         appPath: path,
@@ -700,7 +724,6 @@ for (let i = 0; i < startupArgs.length; i++) {
 }
 
 // --- MAIN DE COMPOSITOR LOOP ---
-
 const pendingKeys = [];
 const releaseInput =
     OS.input && typeof OS.input.pushHandler === 'function'
@@ -711,6 +734,32 @@ let lastTickMs = Date.now();
 let fps = 0;
 let frameAccum = 0;
 let timeAccum = 0;
+
+function routeMouseToLayer(layer, ev) {
+    for (const p of pluginsInLayer(layer, true)) {
+        if (!p.onMouse) continue;
+        try {
+            if (p.onMouse(ev, api)) return true;
+        } catch (err) {
+            showErrorPopup(`MOUSE: ${p.id}`, err);
+            return true;
+        }
+    }
+    return false;
+}
+
+function routeKeyToLayer(layer, key) {
+    for (const p of pluginsInLayer(layer, true)) {
+        if (!p.onKey) continue;
+        try {
+            if (p.onKey(key, api)) return true;
+        } catch (err) {
+            showErrorPopup(`KEY: ${p.id}`, err);
+            return true;
+        }
+    }
+    return false;
+}
 
 try {
     while (true) {
@@ -726,24 +775,31 @@ try {
                 timeAccum = 0;
             }
 
-            // 1. Keyboard input -> focused (non-minimized top) window, with DE fallback shortcuts
+            // 1. Keyboard routing: overlay -> focused window -> panel/desktop/background -> DE shortcuts
             let shouldExit = false;
             while (pendingKeys.length > 0) {
                 const key = pendingKeys.shift();
-                const focused = api.getFocusedWindow();
-                let handled = false;
+                let handled = routeKeyToLayer('overlay', key);
 
-                if (focused && typeof focused.app.onKey === 'function') {
-                    try {
-                        handled = Boolean(focused.app.onKey(key, focused, api));
-                    } catch (err) {
-                        handled = true;
-                        showErrorPopup(`KEY: ${focused.title}`, err);
+                if (!handled) {
+                    const focused = api.getFocusedWindow();
+                    if (focused && typeof focused.app.onKey === 'function') {
+                        try {
+                            handled = Boolean(focused.app.onKey(key, focused, api));
+                        } catch (err) {
+                            handled = true;
+                            showErrorPopup(`KEY: ${focused.title}`, err);
+                        }
                     }
                 }
 
+                if (!handled) handled = routeKeyToLayer('panel', key);
+                if (!handled) handled = routeKeyToLayer('desktop', key);
+                if (!handled) handled = routeKeyToLayer('background', key);
+
                 if (!handled && key === 'F12') {
                     debugHudEnabled = !debugHudEnabled;
+                    emit('debug:toggle', debugHudEnabled);
                     dumpDebugState(debugHudEnabled ? 'hud-on' : 'hud-off');
                     handled = true;
                 }
@@ -772,20 +828,24 @@ try {
                 return 0;
             }
 
-            // 2. Pointer input -> top bar restore, hit test, focus, drag/resize, or client events
+            // 2. Pointer routing: overlay -> panel -> windows -> desktop -> background
             let ev;
             while ((ev = OS.pollMouse()) !== null) {
                 const mx = Math.floor(ev.x / gfx.scale);
                 const my = Math.floor(ev.y / gfx.scale);
+                const ptEv = {
+                    action: ev.action,
+                    x: mx,
+                    y: my,
+                    button: ev.button,
+                    buttons: ev.buttons,
+                };
 
                 if (ev.action === 'down') {
-                    const restoredWin = topBarHitTest(mx, my);
-                    if (restoredWin) {
-                        restoredWin.toggleMinimize();
-                        continue;
-                    }
+                    if (routeMouseToLayer('overlay', ptEv)) continue;
+                    if (routeMouseToLayer('panel', ptEv)) continue;
 
-                    const hit = hitTest(mx, my);
+                    const hit = hitTestWindow(mx, my);
                     if (hit) {
                         focusWindow(hit.win);
                         if (hit.inClose) {
@@ -829,12 +889,11 @@ try {
                                 }
                             }
                         }
-                    } else {
-                        const icon = iconHitTest(mx, my);
-                        if (icon) {
-                            launchDesktopApp(icon);
-                        }
+                        continue;
                     }
+
+                    if (routeMouseToLayer('desktop', ptEv)) continue;
+                    routeMouseToLayer('background', ptEv);
                 } else if (ev.action === 'move') {
                     if (resizeWin && !resizeWin.minimized) {
                         resizeWin.resize(
@@ -844,7 +903,7 @@ try {
                     } else if (dragWin && !dragWin.minimized) {
                         dragWin.x = Math.max(0, Math.min(gfx.width - 24, mx - dragOffX));
                         dragWin.y = Math.max(
-                            CFG.topBarHeight + 1,
+                            workarea.y,
                             Math.min(gfx.height - TITLE_H, my - dragOffY),
                         );
                         dragWin.dirty = true;
@@ -868,6 +927,10 @@ try {
                         } catch (err) {
                             showErrorPopup(`MOUSE: ${activeMouseWin.title}`, err);
                         }
+                    } else {
+                        routeMouseToLayer('overlay', ptEv);
+                        routeMouseToLayer('panel', ptEv);
+                        routeMouseToLayer('desktop', ptEv);
                     }
                 } else if (ev.action === 'up') {
                     if (dragWin) dragWin = null;
@@ -890,10 +953,22 @@ try {
                         }
                     }
                     activeMouseWin = null;
+                    routeMouseToLayer('overlay', ptEv);
+                    routeMouseToLayer('panel', ptEv);
                 }
             }
 
-            // 3. Per-frame app updates
+            // 3. Per-frame plugin & window updates
+            for (let i = 0; i < plugins.length; i++) {
+                const p = plugins[i];
+                if (!p.update) continue;
+                try {
+                    p.update(dt, api, { fps, pendingKeys: pendingKeys.length });
+                } catch (err) {
+                    showErrorPopup(`UPDATE: ${p.id}`, err);
+                }
+            }
+
             for (let i = 0; i < windows.length; i++) {
                 const win = windows[i];
                 if (win.minimized) continue;
@@ -906,15 +981,44 @@ try {
                 }
             }
 
-            // 4. Composite desktop + icons + windows (back-to-front) + top bar + cursor
+            // 4. Composite layers bottom-to-top: background -> desktop -> windows -> panel -> overlay
             gfx.clear(CFG.desktopBg);
-            drawDesktopIcons();
+
+            for (const p of pluginsInLayer('background')) {
+                try {
+                    p.render && p.render(gfx, api);
+                } catch (err) {
+                    showErrorPopup(`RENDER: ${p.id}`, err);
+                }
+            }
+
+            for (const p of pluginsInLayer('desktop')) {
+                try {
+                    p.render && p.render(gfx, api);
+                } catch (err) {
+                    showErrorPopup(`RENDER: ${p.id}`, err);
+                }
+            }
 
             for (let i = 0; i < windows.length; i++) {
                 compositeWindow(windows[i], i === windows.length - 1 && !windows[i].minimized);
             }
 
-            drawTopBar();
+            for (const p of pluginsInLayer('panel')) {
+                try {
+                    p.render && p.render(gfx, api);
+                } catch (err) {
+                    showErrorPopup(`RENDER: ${p.id}`, err);
+                }
+            }
+
+            for (const p of pluginsInLayer('overlay')) {
+                try {
+                    p.render && p.render(gfx, api);
+                } catch (err) {
+                    showErrorPopup(`RENDER: ${p.id}`, err);
+                }
+            }
 
             if (OS.mouse) {
                 drawCursor(
@@ -933,6 +1037,15 @@ try {
         await OS.nextFrame();
     }
 } finally {
+    for (let i = plugins.length - 1; i >= 0; i--) {
+        if (plugins[i].destroy) {
+            try {
+                plugins[i].destroy(api);
+            } catch (err) {
+                OS.log(`DE: plugin destroy error (${plugins[i].id}): ${formatErrDetail(err)}`);
+            }
+        }
+    }
     if (typeof releaseInput === 'function') {
         releaseInput();
     }
