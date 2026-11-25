@@ -1,0 +1,18 @@
+{
+    "desktopBg": 6,
+    "topBarHeight": 11,
+    "titleHeight": 12,
+    "borderWidth": 1,
+    "icon": {
+        "boxW": 24,
+        "boxH": 20,
+        "cellW": 56,
+        "cellH": 38,
+        "topY": 16,
+        "maxLabelChars": 8,
+        "boxBg": 1,
+        "boxBorder": 15,
+        "glyphFg": 11,
+        "labelFg": 15
+    }
+}

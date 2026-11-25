@@ -1,0 +1,10 @@
+[
+    {
+        "id": "termapp",
+        "name": "Terminal",
+        "exec": "/apps/termapp.js",
+        "mode": "window",
+        "w": 200,
+        "h": 120
+    }
+]
